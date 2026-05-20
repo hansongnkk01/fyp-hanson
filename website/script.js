@@ -9,7 +9,17 @@
     console.warn('Configure website/config.js with your Supabase credentials.');
   }
 
-  const supabase = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
+  let supabase = null;
+  try {
+    if (window.supabase && cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY) {
+      supabase = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
+    }
+  } catch (e) {
+    console.error('Supabase init failed:', e);
+  }
+
+  // Show content immediately (scroll fade still works when JS runs)
+  document.querySelectorAll('.section.reveal').forEach((s) => s.classList.add('visible'));
 
   const CIRCUIT_NAMES = {
     1: 'Full-Wave Bridge Rectifier',
@@ -143,6 +153,10 @@
   }
 
   async function sendCommand(command) {
+    if (!supabase) {
+      alert('Supabase not configured. Check website/config.js is deployed on Vercel.');
+      return;
+    }
     const { error } = await supabase.from('commands').insert({
       command,
       status: 'pending',
@@ -262,7 +276,7 @@
     const chartsEl = document.getElementById(chartsId);
     const compId = activeComparisonId || systemState.current_comparison_id;
 
-    if (!compId) return;
+    if (!compId || !supabase) return;
 
     supabase
       .from('circuit_results')
@@ -308,8 +322,14 @@
   }
 
   async function loadInitialState() {
+    if (!supabase) return;
     const { data } = await supabase.from('system_state').select('*').eq('id', 1).single();
     if (data) updateStatusBar(data);
+  }
+
+  if (!supabase) {
+    console.warn('Dashboard running without Supabase — buttons will not work until config.js is set.');
+    return;
   }
 
   // Realtime subscriptions

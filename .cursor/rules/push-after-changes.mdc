@@ -1,0 +1,22 @@
+---
+description: Push FYP project to GitHub after code changes
+alwaysApply: true
+---
+
+# GitHub push for FYP HANSON
+
+After making any code changes in `FYP HANSON`, push to GitHub unless the user says not to:
+
+1. Run from project root:
+   ```
+   git add -A
+   git status
+   git commit -m "<short descriptive message>"
+   git push origin main
+   ```
+2. Remote: `https://github.com/hansongnkk01/fyp-hanson.git` branch `main`
+3. Do NOT commit `esp32-master/config.h` (WiFi secrets — gitignored)
+4. DO commit `website/config.js` when Supabase settings change (needed for Vercel)
+5. Briefly tell the user the push succeeded and Vercel will auto-redeploy
+
+Alternative: run `.\push-to-github.ps1 "commit message"` in the project folder.

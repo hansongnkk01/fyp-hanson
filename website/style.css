@@ -176,12 +176,18 @@ main {
 .section {
   min-height: 80vh;
   padding: 4rem 0;
+  /* Visible by default — JS adds fade-in; avoids blank page if script fails */
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.section.reveal {
   opacity: 0;
   transform: translateY(30px);
   transition: opacity 0.7s ease, transform 0.7s ease;
 }
 
-.section.visible {
+.section.reveal.visible {
   opacity: 1;
   transform: translateY(0);
 }
