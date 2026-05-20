@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FYP | Piezoelectric Circuit Comparison</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="bg-grid" aria-hidden="true"></div>
+  <div class="bg-glow" aria-hidden="true"></div>
+
+  <header class="status-bar" id="statusBar">
+    <div class="status-brand">FYP IoT</div>
+    <div class="status-items">
+      <div class="status-item">
+        <span class="status-label">ESP32</span>
+        <span class="status-dot" id="connDot"></span>
+        <span id="connText">Offline</span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">Stage</span>
+        <span id="stageText">idle</span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">LCD</span>
+        <span id="lcdText">Ready</span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">LED Zone</span>
+        <span id="ledZoneText">0</span>
+      </div>
+    </div>
+    <div class="relay-indicators" id="relayIndicators" aria-label="Relay status"></div>
+  </header>
+
+  <nav class="side-nav">
+    <a href="#landing">Home</a>
+    <a href="#bridge">Bridge</a>
+    <a href="#cwvm">CWVM</a>
+    <a href="#final">Final</a>
+    <a href="#end">End</a>
+  </nav>
+
+  <main>
+    <section id="landing" class="section reveal">
+      <div class="hero">
+        <p class="eyebrow">Final Year Project</p>
+        <h1>Interactive IoT-Based Comparative Study of Bridge Rectifier and Cockcroft-Walton Voltage Multiplier Circuits for Piezoelectric Energy Harvesting</h1>
+        <p class="lead">
+          This system harvests energy from piezoelectric sensors driven by mechanical vibration,
+          then compares rectification topologies in real time using ESP32 master-slave control,
+          relay switching, and cloud-connected analytics.
+        </p>
+      </div>
+      <div class="card-grid">
+        <article class="card info-card">
+          <h2>Piezoelectric Harvesting</h2>
+          <p>Mechanical stress on piezo elements generates AC voltage. A vibration motor excites an acrylic platform; multiple piezo patches convert strain into electrical energy for downstream rectification.</p>
+        </article>
+        <article class="card info-card">
+          <h2>Bridge vs CWVM</h2>
+          <p><strong>Bridge rectifiers</strong> convert AC to pulsating DC efficiently. <strong>Cockcroft-Walton multipliers</strong> stack voltage stages for higher output. This FYP measures which delivers the best usable DC for piezo harvesting.</p>
+        </article>
+        <article class="card info-card">
+          <h2>System Flow</h2>
+          <ol class="flow-list">
+            <li>Bridge comparison (Relay 1 vs 2)</li>
+            <li>CWVM comparison (Relay 3, 4, 5)</li>
+            <li>Final: Bridge winner vs CWVM winner</li>
+          </ol>
+        </article>
+      </div>
+      <a href="#bridge" class="btn btn-primary scroll-btn">Begin Comparison Journey</a>
+    </section>
+
+    <section id="bridge" class="section reveal">
+      <h2 class="section-title">1st Comparison — Bridge Rectifier</h2>
+      <p class="section-desc">Compare half-wave and full-wave bridge rectification for piezoelectric energy harvesting.</p>
+
+      <div class="card-grid circuit-cards">
+        <article class="card circuit-card">
+          <div class="circuit-diagram half-wave">
+            <span class="comp hover-tip" data-tip="AC from piezo harvester">AC~</span>
+            <span class="comp hover-tip" data-tip="Single diode — positive half cycle only">D1</span>
+            <span class="comp hover-tip" data-tip="Filter capacitor smooths pulses">C</span>
+            <span class="comp hover-tip" data-tip="10 kΩ load resistor">R</span>
+          </div>
+          <h3>Half-Wave Rectifier</h3>
+          <p>Relay 2 — Conducts one half of the AC cycle.</p>
+        </article>
+        <article class="card circuit-card">
+          <div class="circuit-diagram full-wave">
+            <span class="comp hover-tip" data-tip="AC input from rectifier stage">AC~</span>
+            <span class="comp hover-tip" data-tip="Four-diode bridge — both half cycles">Bridge</span>
+            <span class="comp hover-tip" data-tip="Output filter capacitor">C</span>
+            <span class="comp hover-tip" data-tip="Load resistor">R</span>
+          </div>
+          <h3>Full-Wave Bridge</h3>
+          <p>Relay 1 — Full-wave bridge rectifier.</p>
+        </article>
+      </div>
+
+      <button class="btn btn-primary" id="btnBridge" data-command="START_BRIDGE_COMPARISON">Start 1st Comparison</button>
+
+      <div id="bridgeResults" class="results-panel hidden">
+        <h3>Bridge Results</h3>
+        <p id="bridgeWinnerText" class="winner-text"></p>
+        <div id="bridgeCharts" class="charts-grid"></div>
+        <div id="bridgeMetrics" class="metrics-grid"></div>
+        <button class="btn btn-secondary" id="btnToCwvm">To 2nd Comparison</button>
+      </div>
+    </section>
+
+    <section id="cwvm" class="section reveal">
+      <h2 class="section-title">2nd Comparison — Cockcroft-Walton Multiplier</h2>
+      <p class="section-desc">Compare 2-stage, 3-stage, and 4-stage voltage multiplier circuits.</p>
+
+      <div class="card-grid circuit-cards">
+        <article class="card circuit-card">
+          <div class="circuit-diagram cwvm-stages">
+            <span class="comp hover-tip" data-tip="Two diode-capacitor stages">2× Stage</span>
+          </div>
+          <h3>2-Stage CWVM</h3>
+          <p>Relay 3</p>
+        </article>
+        <article class="card circuit-card">
+          <div class="circuit-diagram cwvm-stages">
+            <span class="comp hover-tip" data-tip="Three multiplier stages">3× Stage</span>
+          </div>
+          <h3>3-Stage CWVM</h3>
+          <p>Relay 4</p>
+        </article>
+        <article class="card circuit-card">
+          <div class="circuit-diagram cwvm-stages">
+            <span class="comp hover-tip" data-tip="Four multiplier stages">4× Stage</span>
+          </div>
+          <h3>4-Stage CWVM</h3>
+          <p>Relay 5</p>
+        </article>
+      </div>
+
+      <button class="btn btn-primary" id="btnCwvm" data-command="START_CWVM_COMPARISON">Start 2nd Comparison</button>
+
+      <div id="cwvmResults" class="results-panel hidden">
+        <h3>CWVM Results</h3>
+        <p id="cwvmWinnerText" class="winner-text"></p>
+        <div id="cwvmCharts" class="charts-grid"></div>
+        <div id="cwvmMetrics" class="metrics-grid"></div>
+        <button class="btn btn-secondary" id="btnToFinal">To Final Comparison</button>
+      </div>
+    </section>
+
+    <section id="final" class="section reveal">
+      <h2 class="section-title">Final Comparison — Champions</h2>
+      <p class="section-desc">The best bridge rectifier faces the best CWVM stage.</p>
+
+      <div class="card-grid" id="finalistCards">
+        <article class="card finalist-card">
+          <h3>Bridge Champion</h3>
+          <p id="finalBridgeName">—</p>
+          <p class="small">Relay <span id="finalBridgeRelay">—</span></p>
+        </article>
+        <article class="card finalist-card vs-card">VS</article>
+        <article class="card finalist-card">
+          <h3>CWVM Champion</h3>
+          <p id="finalCwvmName">—</p>
+          <p class="small">Relay <span id="finalCwvmRelay">—</span></p>
+        </article>
+      </div>
+      <p id="finalExplain" class="explain-text"></p>
+
+      <button class="btn btn-primary" id="btnFinal" data-command="START_FINAL_COMPARISON">Start Final Comparison</button>
+
+      <div id="finalResults" class="results-panel hidden">
+        <h3>Final Results</h3>
+        <p id="finalWinnerText" class="winner-text champion"></p>
+        <div id="finalCharts" class="charts-grid"></div>
+        <div id="finalMetrics" class="metrics-grid"></div>
+        <button class="btn btn-secondary" id="btnToEnd">The End</button>
+      </div>
+    </section>
+
+    <section id="end" class="section reveal end-section">
+      <div class="end-content">
+        <p class="eyebrow">Thank You</p>
+        <h1 class="end-title">Interactive IoT-Based Comparative Study of Bridge Rectifier and Cockcroft-Walton Voltage Multiplier Circuits for Piezoelectric Energy Harvesting</h1>
+        <div class="credits">
+          <p><strong>Student:</strong> Student Name</p>
+          <p><strong>Supervisor:</strong> Supervisor Name</p>
+        </div>
+        <p class="thank-panel">Thank you to all panel members for your time and feedback.</p>
+        <div class="particles" id="particles" aria-hidden="true"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>FYP IoT Dashboard &copy; 2026 — ESP32 Master-Slave + Supabase + Vercel</p>
+  </footer>
+
+  <div id="tooltip" class="tooltip" role="tooltip"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="config.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
