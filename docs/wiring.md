@@ -37,7 +37,7 @@
 | 21 | Relay CH3 | 2-stage CWVM |
 | 19 | Relay CH4 | 3-stage CWVM |
 | 18 | Relay CH5 | 4-stage CWVM |
-| 5 | Relay CH6 | Unused |
+| 5 | Relay CH6 | 12 V vibration motor driver |
 | 4 | Relay CH7 | Unused |
 | 2 | Relay CH8 | Unused |
 | 25 | LED Zone 1 | Via 220 Ω to GND |
@@ -58,7 +58,8 @@
 | 3 | 2-stage Cockcroft-Walton VM |
 | 4 | 3-stage Cockcroft-Walton VM |
 | 5 | 4-stage Cockcroft-Walton VM |
-| 6–8 | Not used (always OFF) |
+| 6 | Vibration motor (ON during each comparison stage) |
+| 7–8 | Not used (always OFF during measurements) |
 
 ## Wiring table (Slave)
 

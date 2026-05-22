@@ -162,7 +162,16 @@ void setMeasuringState(const char* stage, bool measuring, const char* compId = n
   doc["is_measuring"] = measuring;
   doc["lcd_message"] = measuring ? "Comparing..." : "Ready";
   if (compId) doc["current_comparison_id"] = compId;
-  if (!measuring) doc["led_zone"] = 0;
+  if (measuring) {
+    int zone = 0;
+    if (strcmp(stage, "bridge") == 0) zone = 1;
+    else if (strcmp(stage, "cwvm") == 0) zone = 2;
+    else if (strcmp(stage, "final") == 0) zone = 3;
+    doc["led_zone"] = zone;
+  } else {
+    doc["led_zone"] = 0;
+    doc["relay_mask"] = 0;
+  }
   patchSystemState(doc);
 }
 
@@ -264,6 +273,20 @@ int pickWinner(CircuitData* data, int count) {
   return bestRelay;
 }
 
+void markCircuitWinners(int winnerRelay) {
+  for (int i = 0; i < stageResultCount; i++) {
+    int relay = stageResults[i].relay;
+    bool isWinner = (relay == winnerRelay);
+    StaticJsonDocument<64> patch;
+    patch["winner"] = isWinner;
+    String path = String("circuit_results?comparison_id=eq.") + currentComparisonId
+                + "&stage=eq." + currentStage + "&relay=eq." + relay;
+    String payload;
+    serializeJson(patch, payload);
+    supabaseRequest("PATCH", path, payload);
+  }
+}
+
 bool postComparisonSummary(int winnerRelay, const char* winnerName) {
   StaticJsonDocument<512> doc;
   doc["comparison_id"] = currentComparisonId;
@@ -301,6 +324,8 @@ void finalizeStage() {
     saveCwvmWinner(winner);
   }
 
+  markCircuitWinners(winner);
+
   StaticJsonDocument<384> stateDoc;
   stateDoc["stage"] = "idle";
   stateDoc["is_measuring"] = false;
@@ -308,9 +333,9 @@ void finalizeStage() {
   stateDoc["led_zone"] = 0;
   stateDoc["relay_mask"] = 0;
   stateDoc.createNestedArray("active_relays");
-  if (strcmp(currentStage, "bridge") == 0) stateDoc["bridge_winner_relay"] = winner;
-  if (strcmp(currentStage, "cwvm") == 0) stateDoc["cwvm_winner_relay"] = winner;
-  if (strcmp(currentStage, "final") == 0) stateDoc["final_winner_relay"] = winner;
+  if (currentStage == "bridge") stateDoc["bridge_winner_relay"] = winner;
+  if (currentStage == "cwvm") stateDoc["cwvm_winner_relay"] = winner;
+  if (currentStage == "final") stateDoc["final_winner_relay"] = winner;
   patchSystemState(stateDoc);
 
   postComparisonSummary(winner, winnerName);
@@ -327,12 +352,15 @@ void handleSlaveMessage(JsonDocument& doc) {
   if (!type) return;
 
   if (strcmp(type, "STATUS") == 0) {
+    const char* slaveStage = doc["stage"] | "idle";
+    bool measuring = (strcmp(slaveStage, "idle") != 0);
+
     StaticJsonDocument<384> state;
-    state["stage"] = doc["stage"];
+    state["stage"] = slaveStage;
     state["lcd_message"] = doc["lcd"];
     state["led_zone"] = doc["led_zone"];
     state["relay_mask"] = doc["relay_mask"];
-    state["is_measuring"] = true;
+    state["is_measuring"] = measuring;
     int r = doc["relay"] | 0;
     if (r > 0) {
       JsonArray arr = state["active_relays"].to<JsonArray>();
@@ -432,6 +460,16 @@ String generateComparisonId() {
 void processCommand(const char* command, long commandId) {
   if (waitingForSlave) return;
 
+  if (strcmp(command, "START_FINAL_COMPARISON") == 0) {
+    loadWinners();
+    if (bridgeWinnerRelay < 1 || bridgeWinnerRelay > 2
+        || cwvmWinnerRelay < 3 || cwvmWinnerRelay > 5) {
+      supabaseRequest("PATCH", String("commands?id=eq.") + commandId,
+        "{\"status\":\"error\",\"error_message\":\"Run bridge and CWVM comparisons first\"}");
+      return;
+    }
+  }
+
   currentComparisonId = generateComparisonId();
   pendingCommandId = commandId;
   clearStageResults();
@@ -465,7 +503,6 @@ void processCommand(const char* command, long commandId) {
   } else if (strcmp(command, "START_FINAL_COMPARISON") == 0) {
     currentStage = "final";
     expectedCircuitCount = 2;
-    loadWinners();
     setMeasuringState("final", true, currentComparisonId.c_str());
 #if DEMO_MODE
     int relays[] = {bridgeWinnerRelay, cwvmWinnerRelay};

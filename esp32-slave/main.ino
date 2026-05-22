@@ -49,6 +49,10 @@ const int RELAY_PINS[RELAY_COUNT] = {23, 22, 21, 19, 18, 5, 4, 2};
 #define SAMPLE_COUNT      200
 #define SAMPLE_INTERVAL_MS 10
 
+// Relay 6 drives 12 V vibration motor (external supply via relay module)
+#define VIBRATION_RELAY   6
+#define CIRCUIT_RELAY_MAX 5
+
 // Circuit names by relay number (1-based)
 const char* CIRCUIT_NAMES[6] = {
   "", "Full-Wave Bridge", "Half-Wave", "2-Stage CWVM", "3-Stage CWVM", "4-Stage CWVM"
@@ -80,9 +84,20 @@ void allRelaysOff() {
   }
 }
 
+/** Turn off circuit relays 1–5 only; leave vibration (6) unchanged. */
+void circuitRelaysOff() {
+  for (int i = 0; i < CIRCUIT_RELAY_MAX; i++) {
+    digitalWrite(RELAY_PINS[i], RELAY_OFF);
+  }
+}
+
 void setRelay(int relayNum, bool on) {
   if (relayNum < 1 || relayNum > RELAY_COUNT) return;
   digitalWrite(RELAY_PINS[relayNum - 1], on ? RELAY_ON : RELAY_OFF);
+}
+
+void setVibration(bool on) {
+  setRelay(VIBRATION_RELAY, on);
 }
 
 int getRelayMask() {
@@ -263,7 +278,7 @@ void sendStageDone(const char* stage) {
 
 // ======================== MEASUREMENT ========================
 void measureCircuit(int relayNum, const char* stage, const char* circuitName) {
-  allRelaysOff();
+  circuitRelaysOff();
   delay(50);
   setRelay(relayNum, true);
   sendStatus(stage, relayNum, "Measuring...");
@@ -279,6 +294,7 @@ void measureCircuit(int relayNum, const char* stage, const char* circuitName) {
 }
 
 void finishStage(const char* stage) {
+  setVibration(false);
   allRelaysOff();
   lcdShow("Finished", "");
   setLedZone(0);
@@ -288,26 +304,25 @@ void finishStage(const char* stage) {
   currentStage = "idle";
 }
 
+void beginStage(int ledZone, const char* stage, const char* lcdLine2) {
+  currentStage = stage;
+  setLedZone(ledZone);
+  lcdShow("Comparing...", lcdLine2);
+  setVibration(true);
+  sendStatus(stage, 0, "Comparing...");
+  buzzerTwoSeconds();
+}
+
 // ======================== STAGE RUNNERS ========================
 void runBridgeComparison() {
-  currentStage = "bridge";
-  setLedZone(1);
-  lcdShow("Comparing...", "Bridge Rect");
-  sendStatus("bridge", 0, "Comparing...");
-  buzzerTwoSeconds();
-
+  beginStage(1, "bridge", "Bridge Rect");
   measureCircuit(1, "bridge", CIRCUIT_NAMES[1]);
   measureCircuit(2, "bridge", CIRCUIT_NAMES[2]);
   finishStage("bridge");
 }
 
 void runCwvmComparison() {
-  currentStage = "cwvm";
-  setLedZone(2);
-  lcdShow("Comparing...", "CWVM");
-  sendStatus("cwvm", 0, "Comparing...");
-  buzzerTwoSeconds();
-
+  beginStage(2, "cwvm", "CWVM");
   measureCircuit(3, "cwvm", CIRCUIT_NAMES[3]);
   measureCircuit(4, "cwvm", CIRCUIT_NAMES[4]);
   measureCircuit(5, "cwvm", CIRCUIT_NAMES[5]);
@@ -315,18 +330,18 @@ void runCwvmComparison() {
 }
 
 void runFinalComparison(int bridgeRelay, int cwvmRelay) {
-  currentStage = "final";
-  setLedZone(3);
-  lcdShow("Comparing...", "Final");
-  sendStatus("final", 0, "Comparing...");
-  buzzerTwoSeconds();
-
+  if (bridgeRelay < 1 || bridgeRelay > 2 || cwvmRelay < 3 || cwvmRelay > 5) {
+    sendError("Invalid finalist relays for final comparison");
+    return;
+  }
+  beginStage(3, "final", "Champions");
   measureCircuit(bridgeRelay, "final", CIRCUIT_NAMES[bridgeRelay]);
   measureCircuit(cwvmRelay, "final", CIRCUIT_NAMES[cwvmRelay]);
   finishStage("final");
 }
 
 void stopAll() {
+  setVibration(false);
   allRelaysOff();
   setLedZone(0);
   buzzerOff();

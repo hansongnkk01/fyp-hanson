@@ -1,5 +1,5 @@
 /**
- * FYP Dashboard — Supabase Realtime + Chart.js oscilloscope views
+ * FYP Dashboard — Supabase Realtime + 5-panel results (waveform + 4 metrics)
  */
 (function () {
   'use strict';
@@ -18,7 +18,6 @@
     console.error('Supabase init failed:', e);
   }
 
-  // Show content immediately (scroll fade still works when JS runs)
   document.querySelectorAll('.section.reveal').forEach((s) => s.classList.add('visible'));
 
   const CIRCUIT_NAMES = {
@@ -29,11 +28,16 @@
     5: '4-Stage Cockcroft-Walton',
   };
 
+  const STAGE_LABELS = {
+    bridge: 'Bridge rectifier',
+    cwvm: 'CWVM',
+    final: 'Final champion',
+  };
+
   let systemState = {};
   let activeComparisonId = null;
   const chartInstances = {};
 
-  // DOM refs
   const connDot = document.getElementById('connDot');
   const connText = document.getElementById('connText');
   const stageText = document.getElementById('stageText');
@@ -44,18 +48,22 @@
   const btnBridge = document.getElementById('btnBridge');
   const btnCwvm = document.getElementById('btnCwvm');
   const btnFinal = document.getElementById('btnFinal');
+  const finalGateHint = document.getElementById('finalGateHint');
 
-  // Init relay indicators R1-R8
   for (let i = 1; i <= 8; i++) {
     const el = document.createElement('div');
     el.className = 'relay-led';
     el.id = `relay-${i}`;
     el.textContent = `R${i}`;
-    el.title = i <= 5 ? CIRCUIT_NAMES[i] || `Relay ${i}` : 'Unused';
+    if (i === 6) {
+      el.title = 'Vibration motor (12 V via relay)';
+      el.classList.add('vibration-relay');
+    } else {
+      el.title = i <= 5 ? CIRCUIT_NAMES[i] || `Relay ${i}` : 'Unused';
+    }
     relayIndicators.appendChild(el);
   }
 
-  // Scroll reveal
   const revealObserver = new IntersectionObserver(
     (entries) => {
       entries.forEach((e) => {
@@ -66,10 +74,9 @@
   );
   document.querySelectorAll('.section.reveal').forEach((s) => revealObserver.observe(s));
 
-  // Tooltips
   const tooltip = document.getElementById('tooltip');
   document.querySelectorAll('.hover-tip').forEach((el) => {
-    el.addEventListener('mouseenter', (e) => {
+    el.addEventListener('mouseenter', () => {
       tooltip.textContent = el.dataset.tip || '';
       tooltip.classList.add('show');
     });
@@ -80,19 +87,28 @@
     el.addEventListener('mouseleave', () => tooltip.classList.remove('show'));
   });
 
-  // Navigation buttons
-  document.getElementById('btnToCwvm')?.addEventListener('click', () => {
-    document.getElementById('cwvm').scrollIntoView({ behavior: 'smooth' });
-  });
+  function scrollToSection(sectionId) {
+    const section = document.getElementById(sectionId);
+    if (!section) return;
+    section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    section.classList.remove('scroll-flash');
+    void section.offsetWidth;
+    section.classList.add('scroll-flash');
+    setTimeout(() => section.classList.remove('scroll-flash'), 1300);
+  }
+
+  document.getElementById('btnToCwvm')?.addEventListener('click', () => scrollToSection('cwvm'));
   document.getElementById('btnToFinal')?.addEventListener('click', () => {
     updateFinalists();
-    document.getElementById('final').scrollIntoView({ behavior: 'smooth' });
+    scrollToSection('final');
   });
-  document.getElementById('btnToEnd')?.addEventListener('click', () => {
-    document.getElementById('end').scrollIntoView({ behavior: 'smooth' });
+  document.getElementById('btnToEnd')?.addEventListener('click', () => scrollToSection('end'));
+
+  document.querySelector('.scroll-btn')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    scrollToSection('bridge');
   });
 
-  // Particles on end section
   const particlesEl = document.getElementById('particles');
   if (particlesEl) {
     for (let i = 0; i < 40; i++) {
@@ -109,6 +125,18 @@
     if (!state?.last_seen) return false;
     const last = new Date(state.last_seen).getTime();
     return Date.now() - last < 15000;
+  }
+
+  function canStartFinal() {
+    const br = systemState.bridge_winner_relay;
+    const cr = systemState.cwvm_winner_relay;
+    return br >= 1 && br <= 2 && cr >= 3 && cr <= 5;
+  }
+
+  function updateFinalGate() {
+    const ok = canStartFinal();
+    if (btnFinal) btnFinal.disabled = !ok || !!systemState.is_measuring;
+    finalGateHint?.classList.toggle('hidden', ok);
   }
 
   function updateStatusBar(state) {
@@ -128,11 +156,11 @@
     }
 
     const measuring = !!state?.is_measuring;
-    [btnBridge, btnCwvm, btnFinal].forEach((b) => {
-      if (b) b.disabled = measuring;
-    });
+    if (btnBridge) btnBridge.disabled = measuring;
+    if (btnCwvm) btnCwvm.disabled = measuring;
+    updateFinalGate();
 
-    if (state?.bridge_winner_relay) updateFinalists();
+    if (state?.bridge_winner_relay || state?.cwvm_winner_relay) updateFinalists();
   }
 
   function updateFinalists() {
@@ -148,13 +176,18 @@
     }
     if (br && cr) {
       document.getElementById('finalExplain').textContent =
-        `Relay ${br} (${CIRCUIT_NAMES[br]}) won the bridge comparison with the best combined score for average voltage, ripple, power, and stability. Relay ${cr} (${CIRCUIT_NAMES[cr]}) won among CWVM stages. They now compete for the best piezoelectric harvesting rectification solution.`;
+        `Relay ${br} (${CIRCUIT_NAMES[br]}) is the bridge winner stored in the system. Relay ${cr} (${CIRCUIT_NAMES[cr]}) is the CWVM winner. The final comparison will energise only these two relays in sequence while vibration and zone 3 LED indicate the champion showdown.`;
     }
+    updateFinalGate();
   }
 
   async function sendCommand(command) {
     if (!supabase) {
       alert('Supabase not configured. Check website/config.js is deployed on Vercel.');
+      return;
+    }
+    if (command === 'START_FINAL_COMPARISON' && !canStartFinal()) {
+      alert('Complete 1st (bridge) and 2nd (CWVM) comparisons first.');
       return;
     }
     const { error } = await supabase.from('commands').insert({
@@ -190,6 +223,8 @@
     });
   }
 
+  const chartColors = ['#00ff88', '#00d4ff', '#ffaa00', '#ff66aa', '#a78bfa'];
+
   function createOscilloscopeChart(canvasId, label, vSamples, iSamples) {
     const ctx = document.getElementById(canvasId)?.getContext('2d');
     if (!ctx) return;
@@ -222,29 +257,70 @@
           },
         ],
       },
+      options: chartOptions(label),
+    });
+    chartInstances[canvasId] = chart;
+  }
+
+  function chartOptions(title) {
+    return {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 800 },
+      plugins: {
+        legend: { labels: { color: '#8ba3b8' } },
+        title: title ? { display: true, text: title, color: '#8ba3b8', font: { size: 11 } } : undefined,
+      },
+      scales: {
+        x: {
+          ticks: { color: '#8ba3b8', maxTicksLimit: 8 },
+          grid: { color: 'rgba(0,212,255,0.08)' },
+        },
+        y: {
+          position: 'left',
+          ticks: { color: '#00ff88' },
+          grid: { color: 'rgba(0,255,136,0.1)' },
+          title: { display: true, text: 'V', color: '#00ff88' },
+        },
+        y1: {
+          position: 'right',
+          ticks: { color: '#00d4ff' },
+          grid: { drawOnChartArea: false },
+          title: { display: true, text: 'mA', color: '#00d4ff' },
+        },
+      },
+    };
+  }
+
+  function createOverlayWaveformChart(canvasId, results) {
+    const ctx = document.getElementById(canvasId)?.getContext('2d');
+    if (!ctx) return;
+
+    const datasets = results.map((r, idx) => ({
+      label: `R${r.relay} ${r.circuit_name}`,
+      data: downsample(r.v_samples || []),
+      borderColor: chartColors[idx % chartColors.length],
+      borderWidth: 1.5,
+      pointRadius: 0,
+      tension: 0.2,
+    }));
+
+    const maxLen = Math.max(...datasets.map((d) => d.data.length), 1);
+    const labels = Array.from({ length: maxLen }, (_, i) => i);
+
+    const chart = new Chart(ctx, {
+      type: 'line',
+      data: { labels, datasets },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        animation: { duration: 800 },
-        plugins: {
-          legend: { labels: { color: '#8ba3b8' } },
-        },
+        plugins: { legend: { labels: { color: '#8ba3b8' } } },
         scales: {
-          x: {
-            ticks: { color: '#8ba3b8', maxTicksLimit: 8 },
-            grid: { color: 'rgba(0,212,255,0.08)' },
-          },
+          x: { ticks: { color: '#8ba3b8', maxTicksLimit: 8 }, grid: { color: 'rgba(0,212,255,0.08)' } },
           y: {
-            position: 'left',
             ticks: { color: '#00ff88' },
             grid: { color: 'rgba(0,255,136,0.1)' },
-            title: { display: true, text: 'V', color: '#00ff88' },
-          },
-          y1: {
-            position: 'right',
-            ticks: { color: '#00d4ff' },
-            grid: { drawOnChartArea: false },
-            title: { display: true, text: 'mA', color: '#00d4ff' },
+            title: { display: true, text: 'Voltage (V)', color: '#00ff88' },
           },
         },
       },
@@ -252,73 +328,167 @@
     chartInstances[canvasId] = chart;
   }
 
-  function renderMetrics(containerId, results) {
-    const container = document.getElementById(containerId);
-    if (!container) return;
-    container.innerHTML = '';
+  function createMetricBarChart(canvasId, title, results, field, unit, higherIsBetter) {
+    const ctx = document.getElementById(canvasId)?.getContext('2d');
+    if (!ctx) return;
 
-    results.forEach((r) => {
-      const card = document.createElement('div');
-      card.className = 'metric-card' + (r.winner ? ' winner-highlight' : '');
-      card.innerHTML = `
-        <div class="label">${r.circuit_name} (R${r.relay})</div>
-        <div class="value">Vavg: ${Number(r.vavg).toFixed(3)} V</div>
-        <div class="label">Ripple: ${Number(r.vripple).toFixed(3)} V</div>
-        <div class="label">Power: ${Number(r.pout).toFixed(4)} W</div>
-        <div class="label">Stability: ${Number(r.stability).toFixed(1)}%</div>
-      `;
-      container.appendChild(card);
+    const labels = results.map((r) => `R${r.relay}`);
+    const values = results.map((r) => Number(r[field]) || 0);
+    const colors = results.map((r, idx) =>
+      r.winner ? '#00ff88' : chartColors[idx % chartColors.length]
+    );
+
+    const chart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{ label: title, data: values, backgroundColor: colors.map((c) => c + '99'), borderColor: colors, borderWidth: 1 }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        indexAxis: 'y',
+        plugins: {
+          legend: { display: false },
+          title: { display: true, text: title + (higherIsBetter === false ? ' (lower better)' : ''), color: '#8ba3b8', font: { size: 11 } },
+        },
+        scales: {
+          x: {
+            ticks: { color: '#8ba3b8', callback: (v) => v + (unit || '') },
+            grid: { color: 'rgba(0,212,255,0.08)' },
+          },
+          y: { ticks: { color: '#8ba3b8' }, grid: { display: false } },
+        },
+      },
     });
+    chartInstances[canvasId] = chart;
   }
 
-  function renderStageResults(stage, panelId, chartsId, metricsId, winnerTextId) {
+  function applyWinnerFlags(results, winnerRelay) {
+    return results.map((r) => ({
+      ...r,
+      winner: r.winner || r.relay === winnerRelay,
+    }));
+  }
+
+  function renderFivePanelDashboard(dashboardId, results) {
+    const el = document.getElementById(dashboardId);
+    if (!el) return;
+    destroyCharts(dashboardId);
+
+    const waveId = `${dashboardId}-wave`;
+    const vavgId = `${dashboardId}-vavg`;
+    const rippleId = `${dashboardId}-ripple`;
+    const poutId = `${dashboardId}-pout`;
+    const stabId = `${dashboardId}-stab`;
+
+    el.innerHTML = `
+      <div class="dash-panel dash-wave"><h4>1 — Waveform comparison (oscilloscope)</h4><div class="chart-wrap"><canvas id="${waveId}"></canvas></div></div>
+      <div class="dash-panel"><h4>2 — Average voltage</h4><div class="chart-wrap"><canvas id="${vavgId}"></canvas></div></div>
+      <div class="dash-panel"><h4>3 — Ripple voltage</h4><div class="chart-wrap"><canvas id="${rippleId}"></canvas></div></div>
+      <div class="dash-panel"><h4>4 — Output power</h4><div class="chart-wrap"><canvas id="${poutId}"></canvas></div></div>
+      <div class="dash-panel"><h4>5 — Stability score</h4><div class="chart-wrap"><canvas id="${stabId}"></canvas></div></div>
+    `;
+
+    setTimeout(() => {
+      createOverlayWaveformChart(waveId, results);
+      createMetricBarChart(vavgId, 'Average voltage', results, 'vavg', ' V', true);
+      createMetricBarChart(rippleId, 'Ripple voltage', results, 'vripple', ' V', false);
+      createMetricBarChart(poutId, 'Output power', results, 'pout', ' W', true);
+      createMetricBarChart(stabId, 'Stability', results, 'stability', '%', true);
+    }, 50);
+  }
+
+  function renderConclusion(conclusionId, results, summary, stage) {
+    const el = document.getElementById(conclusionId);
+    if (!el || !summary) return;
+
+    const winner = results.find((r) => r.relay === summary.winner_relay) || results[0];
+    const others = results.filter((r) => r.relay !== summary.winner_relay);
+    const label = STAGE_LABELS[stage] || stage;
+
+    let compare = '';
+    if (others.length && winner) {
+      const bits = others.map((o) => {
+        const vDiff = ((winner.vavg - o.vavg) / (o.vavg || 1)) * 100;
+        return `${o.circuit_name} (R${o.relay}): Vavg ${Number(o.vavg).toFixed(3)} V vs winner ${Number(winner.vavg).toFixed(3)} V`;
+      });
+      compare = bits.join('; ') + '.';
+    }
+
+    el.textContent =
+      `Conclusion (${label}): ${summary.winner_name} on Relay ${summary.winner_relay} wins with the best combined score (25% each: average voltage, ripple, output power, stability). ${compare} This relay is stored as the ${stage === 'bridge' ? 'bridge' : stage === 'cwvm' ? 'CWVM' : 'overall'} winner for the next step.`;
+  }
+
+  function renderStageResults(stage, panelId, dashboardId, chartsId, winnerTextId, conclusionId) {
     const panel = document.getElementById(panelId);
     const chartsEl = document.getElementById(chartsId);
     const compId = activeComparisonId || systemState.current_comparison_id;
 
     if (!compId || !supabase) return;
 
-    supabase
-      .from('circuit_results')
-      .select('*')
-      .eq('comparison_id', compId)
-      .eq('stage', stage)
-      .order('relay')
-      .then(({ data: results }) => {
-        if (!results?.length) return;
+    Promise.all([
+      supabase
+        .from('circuit_results')
+        .select('*')
+        .eq('comparison_id', compId)
+        .eq('stage', stage)
+        .order('relay'),
+      supabase
+        .from('comparison_summary')
+        .select('*')
+        .eq('comparison_id', compId)
+        .eq('stage', stage)
+        .order('created_at', { ascending: false })
+        .limit(1),
+    ]).then(([resOut, sumOut]) => {
+      const results = resOut.data;
+      const summary = sumOut.data?.[0];
+      if (!results?.length) return;
 
-        panel?.classList.remove('hidden');
-        destroyCharts(chartsId);
+      const withWinner = summary
+        ? applyWinnerFlags(results, summary.winner_relay)
+        : results;
 
-        chartsEl.innerHTML = '';
-        results.forEach((r, idx) => {
+      panel?.classList.remove('hidden');
+      destroyCharts(chartsId);
+      destroyCharts(dashboardId);
+
+      renderFivePanelDashboard(dashboardId, withWinner);
+
+      if (chartsEl) {
+        chartsEl.innerHTML = '<p class="results-sub">Per-circuit detail waveforms</p>';
+        withWinner.forEach((r, idx) => {
           const card = document.createElement('div');
           card.className = 'chart-card';
           const canvasId = `${chartsId}-canvas-${idx}`;
-          card.innerHTML = `<h4>${r.circuit_name} — Relay ${r.relay}</h4><div class="chart-wrap"><canvas id="${canvasId}"></canvas></div>`;
+          card.innerHTML = `<h4>${r.circuit_name} — Relay ${r.relay}${r.winner ? ' ★ Winner' : ''}</h4><div class="chart-wrap"><canvas id="${canvasId}"></canvas></div>`;
           chartsEl.appendChild(card);
-          setTimeout(() => {
-            createOscilloscopeChart(canvasId, r.circuit_name, r.v_samples, r.i_samples);
-          }, 50);
+          setTimeout(() => createOscilloscopeChart(canvasId, r.circuit_name, r.v_samples, r.i_samples), 80);
         });
+      }
 
-        renderMetrics(metricsId, results);
-      });
+      if (summary && document.getElementById(winnerTextId)) {
+        document.getElementById(winnerTextId).textContent =
+          `Winner: ${summary.winner_name} (Relay ${summary.winner_relay}) — Best overall score across average voltage, ripple, output power, and stability.`;
+      }
 
-    supabase
-      .from('comparison_summary')
-      .select('*')
-      .eq('comparison_id', compId)
-      .eq('stage', stage)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .then(({ data: rows }) => {
-        const summary = rows?.[0];
-        if (summary && document.getElementById(winnerTextId)) {
-          document.getElementById(winnerTextId).textContent =
-            `Winner: ${summary.winner_name} (Relay ${summary.winner_relay}) — Best overall score across average voltage, ripple, output power, and stability.`;
-        }
-      });
+      if (summary) renderConclusion(conclusionId, withWinner, summary, stage);
+
+      if (stage === 'bridge' || stage === 'cwvm') updateFinalists();
+    });
+  }
+
+  const stageRenderMap = {
+    bridge: ['bridgeResults', 'bridgeDashboard', 'bridgeCharts', 'bridgeWinnerText', 'bridgeConclusion'],
+    cwvm: ['cwvmResults', 'cwvmDashboard', 'cwvmCharts', 'cwvmWinnerText', 'cwvmConclusion'],
+    final: ['finalResults', 'finalDashboard', 'finalCharts', 'finalWinnerText', 'finalConclusion'],
+  };
+
+  function triggerStageRender(stage) {
+    const cfg = stageRenderMap[stage];
+    if (!cfg) return;
+    renderStageResults(stage, cfg[0], cfg[1], cfg[2], cfg[3], cfg[4]);
   }
 
   async function loadInitialState() {
@@ -332,7 +502,6 @@
     return;
   }
 
-  // Realtime subscriptions
   supabase
     .channel('system_state_changes')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'system_state' }, (payload) => {
@@ -345,9 +514,7 @@
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'circuit_results' }, (payload) => {
       const row = payload.new;
       if (!activeComparisonId) activeComparisonId = row.comparison_id;
-      if (row.stage === 'bridge') renderStageResults('bridge', 'bridgeResults', 'bridgeCharts', 'bridgeMetrics', 'bridgeWinnerText');
-      if (row.stage === 'cwvm') renderStageResults('cwvm', 'cwvmResults', 'cwvmCharts', 'cwvmMetrics', 'cwvmWinnerText');
-      if (row.stage === 'final') renderStageResults('final', 'finalResults', 'finalCharts', 'finalMetrics', 'finalWinnerText');
+      triggerStageRender(row.stage);
     })
     .subscribe();
 
@@ -356,9 +523,7 @@
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'comparison_summary' }, (payload) => {
       const s = payload.new;
       activeComparisonId = s.comparison_id;
-      if (s.stage === 'bridge') renderStageResults('bridge', 'bridgeResults', 'bridgeCharts', 'bridgeMetrics', 'bridgeWinnerText');
-      if (s.stage === 'cwvm') renderStageResults('cwvm', 'cwvmResults', 'cwvmCharts', 'cwvmMetrics', 'cwvmWinnerText');
-      if (s.stage === 'final') renderStageResults('final', 'finalResults', 'finalCharts', 'finalMetrics', 'finalWinnerText');
+      triggerStageRender(s.stage);
     })
     .subscribe();
 
@@ -371,7 +536,6 @@
     })
     .subscribe();
 
-  // Poll connection when Realtime quiet
   setInterval(async () => {
     const { data } = await supabase.from('system_state').select('*').eq('id', 1).single();
     if (data) updateStatusBar(data);

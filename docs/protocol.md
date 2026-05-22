@@ -62,11 +62,13 @@
 
 ## Measurement sequence (bridge example)
 
-1. LED Zone 1 ON, LCD "Comparing...", buzzer 2 s
-2. Relay 1 ON only → 200 samples → Relay 1 OFF → send `CIRCUIT_RESULT`
+1. LED Zone 1 ON, LCD "Comparing...", buzzer 2 s, **Relay 6 (vibration) ON**
+2. Relay 1 ON only (2–5, 7–8 OFF) → 200 samples → Relay 1 OFF → send `CIRCUIT_RESULT`
 3. Relay 2 ON only → 200 samples → Relay 2 OFF → send `CIRCUIT_RESULT`
-4. LCD "Finished", LED Zone 1 OFF, buzzer tit-tit-tit, all relays OFF
+4. LCD "Finished", LED Zone 1 OFF, vibration OFF, buzzer tit-tit-tit, all relays OFF
 5. Send `STAGE_DONE`
+
+CWVM stage: LED Zone 2, relays 3→4→5 sequential. Final: LED Zone 3, only stored bridge + CWVM winner relays.
 
 ## Website ↔ Cloud (Supabase)
 

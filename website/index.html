@@ -104,13 +104,30 @@
         </article>
       </div>
 
+      <article class="card compare-table-card">
+        <h3>Bridge circuit differences</h3>
+        <table class="compare-table">
+          <thead><tr><th>Aspect</th><th>Relay 1 — Full-Wave</th><th>Relay 2 — Half-Wave</th></tr></thead>
+          <tbody>
+            <tr><td>Diodes used</td><td>4 (bridge)</td><td>1</td></tr>
+            <tr><td>AC utilisation</td><td>Both half-cycles</td><td>One half-cycle only</td></tr>
+            <tr><td>Expected ripple</td><td>Lower</td><td>Higher</td></tr>
+            <tr><td>Typical efficiency</td><td>Higher for piezo AC</td><td>Lower — more wasted energy</td></tr>
+          </tbody>
+        </table>
+      </article>
+
+      <p class="hardware-hint">When you press Start: Zone 1 LED ON → buzzer 2 s → LCD &quot;Comparing...&quot; → vibration motor (Relay 6) ON → Relay 1 then Relay 2 measured → finished sequence.</p>
+
       <button class="btn btn-primary" id="btnBridge" data-command="START_BRIDGE_COMPARISON">Start 1st Comparison</button>
 
       <div id="bridgeResults" class="results-panel hidden">
-        <h3>Bridge Results</h3>
+        <h3>Bridge Results — 5 live displays</h3>
+        <p class="results-sub">Waveform overlay plus average voltage, ripple, output power, and stability comparison.</p>
         <p id="bridgeWinnerText" class="winner-text"></p>
-        <div id="bridgeCharts" class="charts-grid"></div>
-        <div id="bridgeMetrics" class="metrics-grid"></div>
+        <p id="bridgeConclusion" class="conclusion-text"></p>
+        <div id="bridgeDashboard" class="results-dashboard"></div>
+        <div id="bridgeCharts" class="charts-grid per-circuit-charts"></div>
         <button class="btn btn-secondary" id="btnToCwvm">To 2nd Comparison</button>
       </div>
     </section>
@@ -143,13 +160,29 @@
         </article>
       </div>
 
+      <article class="card compare-table-card">
+        <h3>CWVM stage differences</h3>
+        <table class="compare-table">
+          <thead><tr><th>Aspect</th><th>R3 — 2-Stage</th><th>R4 — 3-Stage</th><th>R5 — 4-Stage</th></tr></thead>
+          <tbody>
+            <tr><td>Voltage multiplication</td><td>Lower</td><td>Medium</td><td>Highest</td></tr>
+            <tr><td>Component count</td><td>Fewest</td><td>More</td><td>Most</td></tr>
+            <tr><td>Expected ripple / load</td><td>Trade-off vs stages</td><td>Trade-off vs stages</td><td>Trade-off vs stages</td></tr>
+          </tbody>
+        </table>
+      </article>
+
+      <p class="hardware-hint">Zone 2 LED → LCD comparing → vibration ON → Relay 3, then 4, then 5 — only one circuit relay active at a time.</p>
+
       <button class="btn btn-primary" id="btnCwvm" data-command="START_CWVM_COMPARISON">Start 2nd Comparison</button>
 
       <div id="cwvmResults" class="results-panel hidden">
-        <h3>CWVM Results</h3>
+        <h3>CWVM Results — 5 live displays</h3>
+        <p class="results-sub">Overlay waveforms and metric bars for all three CWVM stages.</p>
         <p id="cwvmWinnerText" class="winner-text"></p>
-        <div id="cwvmCharts" class="charts-grid"></div>
-        <div id="cwvmMetrics" class="metrics-grid"></div>
+        <p id="cwvmConclusion" class="conclusion-text"></p>
+        <div id="cwvmDashboard" class="results-dashboard"></div>
+        <div id="cwvmCharts" class="charts-grid per-circuit-charts"></div>
         <button class="btn btn-secondary" id="btnToFinal">To Final Comparison</button>
       </div>
     </section>
@@ -172,14 +205,17 @@
         </article>
       </div>
       <p id="finalExplain" class="explain-text"></p>
+      <p id="finalGateHint" class="gate-hint hidden">Complete 1st and 2nd comparisons first — bridge and CWVM winners are required.</p>
 
-      <button class="btn btn-primary" id="btnFinal" data-command="START_FINAL_COMPARISON">Start Final Comparison</button>
+      <button class="btn btn-primary" id="btnFinal" data-command="START_FINAL_COMPARISON" disabled>Start Final Comparison</button>
 
       <div id="finalResults" class="results-panel hidden">
-        <h3>Final Results</h3>
+        <h3>Final Results — 5 live displays</h3>
+        <p class="results-sub">Bridge champion vs CWVM champion — waveform and four performance metrics.</p>
         <p id="finalWinnerText" class="winner-text champion"></p>
-        <div id="finalCharts" class="charts-grid"></div>
-        <div id="finalMetrics" class="metrics-grid"></div>
+        <p id="finalConclusion" class="conclusion-text"></p>
+        <div id="finalDashboard" class="results-dashboard"></div>
+        <div id="finalCharts" class="charts-grid per-circuit-charts"></div>
         <button class="btn btn-secondary" id="btnToEnd">The End</button>
       </div>
     </section>
@@ -189,8 +225,8 @@
         <p class="eyebrow">Thank You</p>
         <h1 class="end-title">Interactive IoT-Based Comparative Study of Bridge Rectifier and Cockcroft-Walton Voltage Multiplier Circuits for Piezoelectric Energy Harvesting</h1>
         <div class="credits">
-          <p><strong>Student:</strong> Student Name</p>
-          <p><strong>Supervisor:</strong> Supervisor Name</p>
+          <p><strong>Student:</strong> Hanson Ng</p>
+          <p><strong>Supervisor:</strong> [Supervisor Name]</p>
         </div>
         <p class="thank-panel">Thank you to all panel members for your time and feedback.</p>
         <div class="particles" id="particles" aria-hidden="true"></div>
