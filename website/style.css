@@ -515,6 +515,68 @@ main {
   border-top: 1px solid var(--border);
 }
 
+/* Emergency stop — fixed bottom-right while scrolling */
+.emergency-fab {
+  position: fixed;
+  right: 1.25rem;
+  bottom: 1.25rem;
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.85rem 1.25rem;
+  border: 2px solid #ff4466;
+  border-radius: 999px;
+  background: linear-gradient(145deg, #8b1530 0%, #ff4466 100%);
+  color: #fff;
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+  box-shadow:
+    0 4px 24px rgba(255, 68, 102, 0.45),
+    0 0 0 4px rgba(255, 68, 102, 0.15);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+
+.emergency-fab:hover {
+  transform: scale(1.04);
+  box-shadow:
+    0 6px 28px rgba(255, 68, 102, 0.55),
+    0 0 0 6px rgba(255, 68, 102, 0.2);
+}
+
+.emergency-fab:active {
+  transform: scale(0.98);
+}
+
+.emergency-fab:disabled {
+  opacity: 0.55;
+  cursor: wait;
+  transform: none;
+}
+
+.emergency-fab-icon {
+  font-size: 0.75rem;
+  line-height: 1;
+}
+
+@media (max-width: 480px) {
+  .emergency-fab {
+    right: 0.75rem;
+    bottom: 0.75rem;
+    padding: 0.75rem 1rem;
+    font-size: 0.85rem;
+  }
+  .emergency-fab-label {
+    display: none;
+  }
+  .emergency-fab-icon {
+    font-size: 1rem;
+  }
+}
+
 /* Measuring overlay */
 .measuring-pulse {
   animation: pulse 1.5s infinite;

@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS commands (
   command TEXT NOT NULL CHECK (command IN (
     'START_BRIDGE_COMPARISON',
     'START_CWVM_COMPARISON',
-    'START_FINAL_COMPARISON'
+    'START_FINAL_COMPARISON',
+    'RESET_SYSTEM'
   )),
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN (
     'pending', 'processing', 'done', 'error'

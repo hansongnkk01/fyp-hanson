@@ -63,6 +63,9 @@ int cwvmWinnerRelay = 3;
 long pendingCommandId = 0;
 
 void markCommandDone(long commandId);
+void markCommandError(long commandId, const char* message);
+void performEmergencyReset(long commandId);
+bool pollAndProcessOneCommand(const String& queryPath);
 
 // ======================== NVS WINNERS ========================
 void loadWinners() {
@@ -447,6 +450,67 @@ void runDemoStage(const char* stage, int* relays, int count) {
 }
 #endif
 
+// ======================== EMERGENCY RESET ========================
+void markCommandError(long commandId, const char* message) {
+  String body = String("{\"status\":\"error\",\"error_message\":\"") + message + "\"}";
+  supabaseRequest("PATCH", String("commands?id=eq.") + commandId, body);
+}
+
+void cancelActiveCommands(long exceptCommandId) {
+  String procPath = "commands?status=eq.processing";
+  String pendPath = "commands?status=eq.pending";
+  if (exceptCommandId > 0) {
+    procPath += "&id=neq." + String(exceptCommandId);
+    pendPath += "&id=neq." + String(exceptCommandId);
+  }
+  supabaseRequest("PATCH", procPath,
+    "{\"status\":\"error\",\"error_message\":\"emergency reset\"}");
+  supabaseRequest("PATCH", pendPath,
+    "{\"status\":\"error\",\"error_message\":\"emergency reset\"}");
+}
+
+void performEmergencyReset(long commandId) {
+  waitingForSlave = false;
+  pendingCommandId = 0;
+  currentStage = "idle";
+  stageResultCount = 0;
+
+#if !DEMO_MODE
+  sendSlaveCmd("STOP_ALL");
+#endif
+
+  StaticJsonDocument<512> doc;
+  doc["stage"] = "idle";
+  doc["is_measuring"] = false;
+  doc["lcd_message"] = "Ready";
+  doc["led_zone"] = 0;
+  doc["relay_mask"] = 0;
+  doc["error_message"] = "Emergency stop";
+  doc.createNestedArray("active_relays");
+  patchSystemState(doc);
+
+  cancelActiveCommands(commandId);
+  markCommandDone(commandId);
+}
+
+bool pollAndProcessOneCommand(const String& queryPath) {
+  String resp;
+  if (!supabaseRequest("GET", queryPath, "", &resp)) return false;
+  if (resp == "[]" || resp.length() < 3) return false;
+
+  DynamicJsonDocument doc(1024);
+  if (deserializeJson(doc, resp) != DeserializationError::Ok) return false;
+  if (!doc.is<JsonArray>() || doc.size() == 0) return false;
+
+  JsonObject cmd = doc[0];
+  long id = cmd["id"];
+  const char* command = cmd["command"];
+  if (!command) return false;
+
+  processCommand(command, id);
+  return true;
+}
+
 // ======================== COMMAND PROCESSING ========================
 String generateComparisonId() {
   // Simple UUID v4-like from random
@@ -458,6 +522,11 @@ String generateComparisonId() {
 }
 
 void processCommand(const char* command, long commandId) {
+  if (strcmp(command, "RESET_SYSTEM") == 0) {
+    performEmergencyReset(commandId);
+    return;
+  }
+
   if (waitingForSlave) return;
 
   if (strcmp(command, "START_FINAL_COMPARISON") == 0) {
@@ -517,21 +586,12 @@ void processCommand(const char* command, long commandId) {
 }
 
 void pollCommands() {
-  String resp;
-  String path = "commands?status=eq.pending&order=created_at.asc&limit=1";
-  if (!supabaseRequest("GET", path, "", &resp)) return;
-  if (resp == "[]" || resp.length() < 3) return;
-
-  DynamicJsonDocument doc(1024);
-  if (deserializeJson(doc, resp) != DeserializationError::Ok) return;
-  if (!doc.is<JsonArray>() || doc.size() == 0) return;
-
-  JsonObject cmd = doc[0];
-  long id = cmd["id"];
-  const char* command = cmd["command"];
-  if (!command) return;
-
-  processCommand(command, id);
+  // Emergency reset is polled even while waitingForSlave
+  if (pollAndProcessOneCommand("commands?status=eq.pending&command=eq.RESET_SYSTEM&order=created_at.asc&limit=1")) {
+    return;
+  }
+  if (waitingForSlave) return;
+  pollAndProcessOneCommand("commands?status=eq.pending&order=created_at.asc&limit=1");
 }
 
 void markCommandDone(long commandId) {
@@ -580,7 +640,7 @@ void loop() {
     sendHeartbeat();
   }
 
-  if (!waitingForSlave && millis() - lastPoll > COMMAND_POLL_MS) {
+  if (millis() - lastPoll > COMMAND_POLL_MS) {
     lastPoll = millis();
     pollCommands();
   }

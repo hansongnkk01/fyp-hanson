@@ -205,6 +205,62 @@
     btn?.addEventListener('click', () => sendCommand(btn.dataset.command));
   });
 
+  const btnEmergencyStop = document.getElementById('btnEmergencyStop');
+
+  async function emergencyStop() {
+    if (!supabase) {
+      alert('Supabase not configured. Check website/config.js is deployed on Vercel.');
+      return;
+    }
+    if (
+      !confirm(
+        'Emergency STOP: halt all measurements, turn off relays/LEDs, and reset the system to idle?'
+      )
+    ) {
+      return;
+    }
+
+    btnEmergencyStop.disabled = true;
+
+    const idlePatch = {
+      stage: 'idle',
+      is_measuring: false,
+      lcd_message: 'Ready',
+      led_zone: 0,
+      relay_mask: 0,
+      active_relays: [],
+      error_message: 'Emergency stop',
+    };
+
+    const { error: stateErr } = await supabase.from('system_state').update(idlePatch).eq('id', 1);
+    if (stateErr) {
+      console.warn('system_state update:', stateErr);
+    } else {
+      updateStatusBar({ ...systemState, ...idlePatch, connection: systemState.connection || 'online' });
+    }
+
+    await supabase
+      .from('commands')
+      .update({ status: 'error', error_message: 'emergency reset' })
+      .in('status', ['pending', 'processing']);
+
+    const { error: cmdErr } = await supabase.from('commands').insert({
+      command: 'RESET_SYSTEM',
+      status: 'pending',
+    });
+
+    btnEmergencyStop.disabled = false;
+
+    if (cmdErr) {
+      alert('Emergency stop failed: ' + cmdErr.message);
+      return;
+    }
+
+    activeComparisonId = null;
+  }
+
+  btnEmergencyStop?.addEventListener('click', () => emergencyStop());
+
   function downsample(arr, maxPoints = 100) {
     if (!arr || !arr.length) return [];
     if (arr.length <= maxPoints) return arr;

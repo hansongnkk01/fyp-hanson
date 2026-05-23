@@ -345,7 +345,7 @@ void stopAll() {
   allRelaysOff();
   setLedZone(0);
   buzzerOff();
-  lcdShow("Stopped", "");
+  lcdShow("Ready", "Await Master");
   currentStage = "idle";
   sendStatus("idle", 0, "Ready");
 }

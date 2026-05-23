@@ -25,8 +25,16 @@
 | `START_BRIDGE` | Sequential measure relay 1, then relay 2 |
 | `START_CWVM` | Sequential measure relays 3, 4, 5 |
 | `START_FINAL` | Measure `bridge` relay only, then `cwvm` relay only |
-| `STOP_ALL` | All relays off, LEDs off, LCD "Stopped" |
+| `STOP_ALL` | All relays off, LEDs off, LCD "Ready" / "Await Master" |
 | `PING` | Slave replies `{"type":"PONG"}` |
+
+## Website emergency stop
+
+Fixed **STOP** button (bottom-right) inserts `RESET_SYSTEM` into `commands` and sets `system_state` to idle immediately.
+
+| Website command | Master action |
+|-----------------|---------------|
+| `RESET_SYSTEM` | `STOP_ALL` to Slave, clear `waitingForSlave`, PATCH idle state, cancel other pending/processing commands |
 
 ## Slave → Master messages
 
@@ -79,3 +87,4 @@ Website inserts into `commands`. Master polls `commands?status=eq.pending`. Mast
 | `START_BRIDGE_COMPARISON` | `START_BRIDGE` |
 | `START_CWVM_COMPARISON` | `START_CWVM` |
 | `START_FINAL_COMPARISON` | `START_FINAL` with NVS winners |
+| `RESET_SYSTEM` | `STOP_ALL` + idle `system_state` |
