@@ -1,4 +1,5 @@
 # Secrets (WiFi password — keep local only)
+esp32-controller/config.h
 esp32-master/config.h
 # Note: website/config.js is committed so Vercel can load Supabase (anon key only)
 

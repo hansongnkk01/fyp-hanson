@@ -1,33 +1,20 @@
--- FYP: Full-Wave vs 2-Stage CWVM Measurement (single ESP32)
--- Run in Supabase SQL Editor
+-- Migration from old 3-stage winner workflow to FW vs 2S measurement
+-- Run once in Supabase SQL Editor (drops old result tables)
 
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+DROP TABLE IF EXISTS circuit_results CASCADE;
+DROP TABLE IF EXISTS comparison_summary CASCADE;
 
--- ============================================================
--- commands (website -> ESP32)
--- ============================================================
-CREATE TABLE IF NOT EXISTS commands (
-  id BIGSERIAL PRIMARY KEY,
-  command TEXT NOT NULL CHECK (command IN (
-    'MEASURE_FW_CIRCUIT',
-    'MEASURE_2S_CIRCUIT',
-    'RESET_SYSTEM'
-  )),
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN (
-    'pending', 'processing', 'done', 'error'
-  )),
-  error_message TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  processed_at TIMESTAMPTZ
-);
+ALTER TABLE commands DROP CONSTRAINT IF EXISTS commands_command_check;
+ALTER TABLE commands ADD CONSTRAINT commands_command_check CHECK (command IN (
+  'MEASURE_FW_CIRCUIT',
+  'MEASURE_2S_CIRCUIT',
+  'RESET_SYSTEM'
+));
 
-CREATE INDEX IF NOT EXISTS idx_commands_pending ON commands (status, created_at)
-  WHERE status = 'pending';
+-- Recreate system_state with new columns (simplest: drop single row table columns via recreate)
+DROP TABLE IF EXISTS system_state CASCADE;
 
--- ============================================================
--- system_state (single row)
--- ============================================================
-CREATE TABLE IF NOT EXISTS system_state (
+CREATE TABLE system_state (
   id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
   stage TEXT NOT NULL DEFAULT 'idle' CHECK (stage IN (
     'idle', 'measuring_fw', 'fw_measured', 'measuring_2s', 'twos_measured'
@@ -50,12 +37,8 @@ CREATE TABLE IF NOT EXISTS system_state (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-INSERT INTO system_state (id) VALUES (1)
-ON CONFLICT (id) DO NOTHING;
+INSERT INTO system_state (id) VALUES (1);
 
--- ============================================================
--- measurement_samples (1 Hz time-series per run)
--- ============================================================
 CREATE TABLE IF NOT EXISTS measurement_samples (
   id BIGSERIAL PRIMARY KEY,
   measurement_id UUID NOT NULL,
@@ -71,9 +54,6 @@ CREATE TABLE IF NOT EXISTS measurement_samples (
 CREATE INDEX IF NOT EXISTS idx_measurement_samples_run
   ON measurement_samples (measurement_id, circuit_key, time_s);
 
--- ============================================================
--- measurement_summary (aggregates per run)
--- ============================================================
 CREATE TABLE IF NOT EXISTS measurement_summary (
   id BIGSERIAL PRIMARY KEY,
   measurement_id UUID NOT NULL,
@@ -93,33 +73,18 @@ CREATE TABLE IF NOT EXISTS measurement_summary (
 CREATE INDEX IF NOT EXISTS idx_measurement_summary_circuit
   ON measurement_summary (circuit_key, created_at DESC);
 
--- ============================================================
--- RLS (permissive demo)
--- ============================================================
-ALTER TABLE commands ENABLE ROW LEVEL SECURITY;
 ALTER TABLE system_state ENABLE ROW LEVEL SECURITY;
 ALTER TABLE measurement_samples ENABLE ROW LEVEL SECURITY;
 ALTER TABLE measurement_summary ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "commands_select" ON commands FOR SELECT USING (true);
-CREATE POLICY "commands_insert" ON commands FOR INSERT WITH CHECK (true);
-CREATE POLICY "commands_update" ON commands FOR UPDATE USING (true);
-
 CREATE POLICY "system_state_select" ON system_state FOR SELECT USING (true);
 CREATE POLICY "system_state_update" ON system_state FOR UPDATE USING (true);
 CREATE POLICY "system_state_insert" ON system_state FOR INSERT WITH CHECK (true);
-
 CREATE POLICY "measurement_samples_select" ON measurement_samples FOR SELECT USING (true);
 CREATE POLICY "measurement_samples_insert" ON measurement_samples FOR INSERT WITH CHECK (true);
-
 CREATE POLICY "measurement_summary_select" ON measurement_summary FOR SELECT USING (true);
 CREATE POLICY "measurement_summary_insert" ON measurement_summary FOR INSERT WITH CHECK (true);
 
--- Realtime
-DO $$ BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE system_state;
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE commands;
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE measurement_samples;
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN ALTER PUBLICATION supabase_realtime ADD TABLE measurement_summary;

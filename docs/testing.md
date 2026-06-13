@@ -1,90 +1,37 @@
-# Testing Guide
+# Testing Checklist
 
-## Pre-flight checklist
+## Supabase
 
-- [ ] Supabase schema applied (`supabase/schema.sql`)
-- [ ] Realtime enabled for `system_state`, `circuit_results`, `comparison_summary`, `commands`
-- [ ] `website/config.js` has valid URL + anon key
-- [ ] `esp32-master/config.h` has WiFi + Supabase credentials
-- [ ] Master and Slave UART wired (cross TX/RX, common GND)
-- [ ] Slave powered, LCD shows "Ready"
-- [ ] Master connected to WiFi (Serial shows IP)
+- [ ] Run `migration-v2-fw-2s.sql` on existing project (or fresh `schema.sql`)
+- [ ] `commands` accepts `MEASURE_FW_CIRCUIT`, `MEASURE_2S_CIRCUIT`, `RESET_SYSTEM`
+- [ ] Realtime enabled on `system_state`, `measurement_summary`
 
----
+## Website
 
-## Test 1 — Supabase connectivity (no hardware)
+- [ ] Status bar shows online when ESP32 connected
+- [ ] Measure FW disabled while 2S measuring (and vice versa)
+- [ ] Charts populate after each run (10 points)
+- [ ] Conclusion button disabled until both circuits have summary rows
+- [ ] Conclusion expands and scrolls into view
+- [ ] STOP resets UI to idle immediately
 
-1. Open dashboard URL (local `index.html` or Vercel).
-2. Power Master ESP32 only.
-3. Within 15 s, status bar should show **ESP32 Online**.
-4. `last_seen` in Supabase `system_state` should update every ~2 s.
+## ESP32 (hardware)
 
----
+- [ ] WiFi connects; heartbeat updates `connection=online`
+- [ ] FW measure: R1,R3,R5 then R7 only during capture; LED25 on
+- [ ] 2S measure: R2,R4,R6 then R7; LED26 on
+- [ ] Never R1+R2 (or R3+R4, R5+R6) simultaneously
+- [ ] STOP during measure: all relays off, measure command → error
+- [ ] Buzzer 2 s at start, 3 short beeps at end
 
-## Test 2 — UART / Slave only
+## ESP32 (`DEMO_MODE 1`)
 
-1. Upload Slave firmware.
-2. Upload Master firmware.
-3. From Supabase, insert command manually:
-   ```sql
-   INSERT INTO commands (command, status) VALUES ('START_BRIDGE_COMPARISON', 'pending');
-   ```
-4. Observe: LED Zone 1, buzzer, LCD "Comparing...", relays click **one at a time** (R1 then R2).
-5. Rows appear in `circuit_results`; `comparison_summary` shows bridge winner.
+- [ ] Upload without INA219; synthetic 10-point curves appear on dashboard
 
----
+## Stabilization examples
 
-## Test 3 — Website button (bridge)
-
-1. Open live dashboard.
-2. Scroll to Bridge section → **Start 1st Comparison**.
-3. Confirm measuring state disables buttons.
-4. Charts populate with ~200-point waveforms.
-5. Winner text appears; **To 2nd Comparison** visible.
-
----
-
-## Test 4 — CWVM comparison
-
-1. Click **Start 2nd Comparison**.
-2. LED Zone 2 active during run.
-3. Three result sets (relays 3, 4, 5).
-4. CWVM winner stored in `system_state.cwvm_winner_relay`.
-
----
-
-## Test 5 — Final comparison
-
-1. Verify finalist cards show correct relay names.
-2. **Start Final Comparison** — only two relays energize (sequentially).
-3. Final winner in `comparison_summary` and UI.
-
----
-
-## Test 6 — End-to-end demo script (panel)
-
-1. Start vibration motor (12 V external).
-2. Open Vercel URL on laptop/phone (same WiFi as ESP32).
-3. Run Bridge → CWVM → Final → scroll to End.
-4. Total time ≈ 3–5 minutes per full run.
-
----
-
-## Integration verification matrix
-
-| Step | Pass criteria |
-|------|----------------|
-| GitHub push | All folders present, no secrets in repo |
-| Vercel deploy | `*.vercel.app` loads, no console 401 |
-| Supabase Realtime | Status updates without refresh |
-| Master poll | `commands` row moves pending → done |
-| Slave sequential | Never two relays ON together |
-| Charts | Voltage green trace animates |
-| NVS | Final uses prior winners after Master reset |
-
----
-
-## DEMO_MODE (website-only test)
-
-In `esp32-master/config.h` set `#define DEMO_MODE 1`.  
-Master generates synthetic waveforms without Slave — useful for UI rehearsal.
+| Samples (V) | Expected stab time |
+|-------------|-------------------|
+| 1.2, 2.0, 2.4, 2.5, 2.5, 2.5, … | 5 s (3rd stable 2.5 at index 5) |
+| 1.0, 1.0, 2.0, 2.0, … | 1 s (2-sample fallback) |
+| All drifting | "—" |

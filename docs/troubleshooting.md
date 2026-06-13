@@ -1,93 +1,35 @@
-# Troubleshooting Guide
+# Troubleshooting
 
-## ESP32 shows Offline on dashboard
+## Dashboard shows Offline
 
-| Cause | Fix |
-|-------|-----|
-| Wrong WiFi credentials | Edit `esp32-master/config.h`, re-flash |
-| Master not powered | Power USB, check Serial |
-| Supabase URL/key wrong | Match Project Settings → API |
-| `last_seen` not updating | Check Serial for HTTP errors; verify RLS policies |
-| NTP not synced | Wait 30 s after boot; heartbeat still sends timestamp |
-
----
-
-## Supabase HTTP 401 / 403
-
-- Use **anon** key, not service role in firmware/website.
-- Re-run `schema.sql` RLS policies.
-- Ensure `apikey` and `Authorization: Bearer` headers (handled in Master firmware).
-
----
+- Check `esp32-controller/config.h` WiFi and Supabase URL/key.
+- Serial monitor @ 115200 for HTTP errors.
+- Confirm `system_state` row exists (`id=1`).
 
 ## Commands stay `pending`
 
-- Master must be online and not stuck in `waitingForSlave`.
-- Check only one pending command at a time.
-- Verify Master Serial: WiFi connected, no SSL errors.
-- Insert test command via SQL to isolate website issue.
+- ESP32 must be on WiFi with internet.
+- Only one measure at a time; check `is_measuring` in `system_state`.
+- Run migration if old command names still in CHECK constraint.
 
----
+## No measurement data on website
 
-## Slave timeout
+- Confirm rows in `measurement_summary` and `measurement_samples`.
+- Realtime enabled on both tables.
+- Re-measure after migration (old `circuit_results` table removed).
 
-- UART wires crossed? Master TX → Slave RX.
-- Common GND connected?
-- Baud 115200 on both.
-- Slave must not block in `delay()` before UART init — upload Slave first.
+## Relay / boot issues
 
----
+- GPIO2 (R8) can affect boot — keep R8 OFF when flashing.
+- Disconnect vibration motor during USB flash.
+- See [wiring.md](wiring.md) for relay map.
 
-## INA219 not found
+## INA219 error on LCD
 
-- I2C address 0x40 (default).
-- SDA=32, SCL=33 on Slave.
-- LCD at 0x27 — different address, same bus OK.
-- Check 3.3 V and pull-ups (module usually includes them).
+- Check I2C wiring SDA=32, SCL=33.
+- Or set `DEMO_MODE 1` in `config.h` for dashboard-only demo.
 
----
+## Emergency STOP
 
-## Flat / zero waveform
-
-- Piezo/motor not running during sample window.
-- Voltage sensor not on active relay output.
-- Calibrate `CAL_V` — see [calibration.md](calibration.md).
-- Relay inverted? Toggle `RELAY_ON` / `RELAY_OFF` in Slave if clicks but no output.
-
----
-
-## Wrong relay activates
-
-- Verify IN1–IN8 wiring matches GPIO order in `main.ino`.
-- Relay module may be active-HIGH — change `#define RELAY_ON HIGH`.
-
----
-
-## Charts empty but hardware finished
-
-- Enable Realtime on `circuit_results` and `comparison_summary`.
-- Check browser console for Supabase errors.
-- Payload size: if POST fails, reduce `SAMPLE_COUNT` to 100 in Slave.
-
----
-
-## HTTPS / memory errors on ESP32
-
-- Master uses `setInsecure()` for Supabase — required for many ESP32 setups.
-- Close other WiFi connections; use DevKit with PSRAM if available.
-- Reduce JSON buffer if OOM during POST.
-
----
-
-## Website config not loaded
-
-- `config.js` must load **before** `script.js` in `index.html`.
-- On Vercel, ensure `config.js` exists in deployed `website/` folder.
-
----
-
-## Final comparison wrong circuits
-
-- Run Bridge and CWVM first to set NVS winners.
-- Check `system_state.bridge_winner_relay` and `cwvm_winner_relay` in Supabase.
-- Master loads NVS on boot via `loadWinners()`.
+- Inserts `RESET_SYSTEM`; firmware turns all relays off and clears `is_measuring`.
+- Website also patches `system_state` to idle for instant UI feedback.

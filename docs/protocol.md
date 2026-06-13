@@ -1,90 +1,63 @@
-# UART Communication Protocol (Master ↔ Slave)
+# Cloud Protocol (Supabase)
 
-## Physical layer
-| Parameter | Value |
-|-----------|-------|
-| Interface | UART2 on both ESP32 boards |
-| Master TX | GPIO 17 → Slave RX (GPIO 16) |
-| Master RX | GPIO 16 ← Slave TX (GPIO 17) |
-| Baud rate | 115200 |
-| Format | 8N1 |
-| Framing | Newline-delimited JSON (`\n`) |
+## Tables
 
-## Master → Slave commands
+### `commands`
 
-```json
-{"cmd":"START_BRIDGE"}
-{"cmd":"START_CWVM"}
-{"cmd":"START_FINAL","bridge":1,"cwvm":4}
-{"cmd":"STOP_ALL"}
-{"cmd":"PING"}
-```
+Website inserts rows; ESP32 polls `status=pending`, sets `processing`, then `done` or `error`.
 
-| Command | Action |
-|---------|--------|
-| `START_BRIDGE` | Sequential measure relay 1, then relay 2 |
-| `START_CWVM` | Sequential measure relays 3, 4, 5 |
-| `START_FINAL` | Measure `bridge` relay only, then `cwvm` relay only |
-| `STOP_ALL` | All relays off, LEDs off, LCD "Ready" / "Await Master" |
-| `PING` | Slave replies `{"type":"PONG"}` |
+| command | Description |
+|---------|-------------|
+| `MEASURE_FW_CIRCUIT` | Measure Full-Wave Bridge (10 s, 1 Hz) |
+| `MEASURE_2S_CIRCUIT` | Measure 2-Stage CWVM |
+| `RESET_SYSTEM` | Emergency stop — all relays off |
 
-## Website emergency stop
+### `system_state` (single row `id=1`)
 
-Fixed **STOP** button (bottom-right) inserts `RESET_SYSTEM` into `commands` and sets `system_state` to idle immediately.
+| Field | Purpose |
+|-------|---------|
+| `stage` | `idle`, `measuring_fw`, `fw_measured`, `measuring_2s`, `twos_measured` |
+| `connection` | `online` / `offline` (heartbeat) |
+| `active_circuit` | `none`, `full_wave`, `two_stage_cwvm` |
+| `is_measuring` | Mutex for website buttons |
+| `fw_measured`, `twos_measured` | Flags after successful uploads |
+| `active_relays` | JSON array of human labels, e.g. `["R1 Voltage FW","R7 Vibration"]` |
+| `led_fw`, `led_2s` | Mirror GPIO 25 / 26 |
+| `lcd_message` | Last LCD line |
+| `relay_mask` | Bitmask of active relays |
+| `current_measurement_id` | UUID for in-flight run |
 
-| Website command | Master action |
-|-----------------|---------------|
-| `RESET_SYSTEM` | `STOP_ALL` to Slave, clear `waitingForSlave`, PATCH idle state, cancel other pending/processing commands |
+### `measurement_samples`
 
-## Slave → Master messages
+One row per second per run:
 
-### STATUS
-```json
-{"type":"STATUS","stage":"bridge","relay":1,"lcd":"Measuring...","led_zone":1,"relay_mask":1}
-```
+`measurement_id`, `circuit_key` (`full_wave` | `two_stage_cwvm`), `time_s` (0–9), `voltage`, `current`, `power`.
 
-### CIRCUIT_RESULT
-```json
-{
-  "type":"CIRCUIT_RESULT",
-  "stage":"bridge",
-  "relay":1,
-  "circuit_name":"Full-Wave Bridge",
-  "vavg":4.2,"vmax":4.5,"vmin":3.9,"vripple":0.6,
-  "iavg":0.00042,"pout":0.00176,"pout_v2r":0.00176,
-  "stability":78.5,
-  "v_samples":[...200 floats...],
-  "i_samples":[...200 floats...]
-}
-```
+### `measurement_summary`
 
-### STAGE_DONE
-```json
-{"type":"STAGE_DONE","stage":"bridge"}
-```
+Aggregates per run: `vavg`, `iavg`, `pavg`, `vmax`, `vmin`, `vripple`, `stabilization_time`, `stabilization_ok`.
 
-### ERROR
-```json
-{"type":"ERROR","message":"INA219 not found on I2C bus"}
-```
+## Stabilization time (firmware)
 
-## Measurement sequence (bridge example)
+Scan voltage samples from t=0:
 
-1. LED Zone 1 ON, LCD "Comparing...", buzzer 2 s, **Relay 6 (vibration) ON**
-2. Relay 1 ON only (2–5, 7–8 OFF) → 200 samples → Relay 1 OFF → send `CIRCUIT_RESULT`
-3. Relay 2 ON only → 200 samples → Relay 2 OFF → send `CIRCUIT_RESULT`
-4. LCD "Finished", LED Zone 1 OFF, vibration OFF, buzzer tit-tit-tit, all relays OFF
-5. Send `STAGE_DONE`
+1. First chain of **≥3** consecutive samples within ±0.05 V or ±2% → time of **3rd** sample.
+2. Else first **≥2** consecutive → time of **2nd** sample.
+3. Else `stabilization_ok=false`, UI shows "—".
 
-CWVM stage: LED Zone 2, relays 3→4→5 sequential. Final: LED Zone 3, only stored bridge + CWVM winner relays.
+## Measurement sequence (FW example)
 
-## Website ↔ Cloud (Supabase)
+1. All relays OFF  
+2. R1, R3, R5 ON  
+3. LCD "Measuring FW", LED GPIO25 ON  
+4. Buzzer 2 s  
+5. R7 ON → sample 10× @ 1 s  
+6. R7 OFF, R1/R3/R5 OFF  
+7. Buzzer tit×3, LCD "FW Measured"  
+8. POST samples + summary  
 
-Website inserts into `commands`. Master polls `commands?status=eq.pending`. Master writes `circuit_results`, `comparison_summary`, and patches `system_state`. Website subscribes via Supabase Realtime.
+2S uses R2, R4, R6 and LED GPIO26.
 
-| Website command | Master UART |
-|-----------------|-------------|
-| `START_BRIDGE_COMPARISON` | `START_BRIDGE` |
-| `START_CWVM_COMPARISON` | `START_CWVM` |
-| `START_FINAL_COMPARISON` | `START_FINAL` with NVS winners |
-| `RESET_SYSTEM` | `STOP_ALL` + idle `system_state` |
+## Realtime
+
+Enable replication for `system_state`, `commands`, `measurement_summary` (and optionally `measurement_samples`).
