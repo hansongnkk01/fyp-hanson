@@ -4,7 +4,16 @@
 DROP TABLE IF EXISTS circuit_results CASCADE;
 DROP TABLE IF EXISTS comparison_summary CASCADE;
 
+-- Remove old command rows before tightening CHECK (avoids 23514 violation)
 ALTER TABLE commands DROP CONSTRAINT IF EXISTS commands_command_check;
+
+DELETE FROM commands
+WHERE command NOT IN (
+  'MEASURE_FW_CIRCUIT',
+  'MEASURE_2S_CIRCUIT',
+  'RESET_SYSTEM'
+);
+
 ALTER TABLE commands ADD CONSTRAINT commands_command_check CHECK (command IN (
   'MEASURE_FW_CIRCUIT',
   'MEASURE_2S_CIRCUIT',
@@ -76,6 +85,14 @@ CREATE INDEX IF NOT EXISTS idx_measurement_summary_circuit
 ALTER TABLE system_state ENABLE ROW LEVEL SECURITY;
 ALTER TABLE measurement_samples ENABLE ROW LEVEL SECURITY;
 ALTER TABLE measurement_summary ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "system_state_select" ON system_state;
+DROP POLICY IF EXISTS "system_state_update" ON system_state;
+DROP POLICY IF EXISTS "system_state_insert" ON system_state;
+DROP POLICY IF EXISTS "measurement_samples_select" ON measurement_samples;
+DROP POLICY IF EXISTS "measurement_samples_insert" ON measurement_samples;
+DROP POLICY IF EXISTS "measurement_summary_select" ON measurement_summary;
+DROP POLICY IF EXISTS "measurement_summary_insert" ON measurement_summary;
 
 CREATE POLICY "system_state_select" ON system_state FOR SELECT USING (true);
 CREATE POLICY "system_state_update" ON system_state FOR UPDATE USING (true);
