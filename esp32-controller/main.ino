@@ -74,8 +74,73 @@ unsigned long lastHeartbeat = 0;
 unsigned long lastPoll = 0;
 bool activeCircuitIsFw = true;
 long pendingResetCommandId = 0;
+bool lastWifiConnected = false;
+unsigned long lastWifiDebugMs = 0;
+
+#define WIFI_DEBUG_INTERVAL_MS 30000
 
 void pollCommandsDuringMeasure();
+
+// ======================== WIFI DEBUG ========================
+const char* wifiStatusText(wl_status_t status) {
+  switch (status) {
+    case WL_IDLE_STATUS: return "IDLE";
+    case WL_NO_SSID_AVAIL: return "NO_SSID_AVAIL";
+    case WL_SCAN_COMPLETED: return "SCAN_COMPLETED";
+    case WL_CONNECTED: return "CONNECTED";
+    case WL_CONNECT_FAILED: return "CONNECT_FAILED";
+    case WL_CONNECTION_LOST: return "CONNECTION_LOST";
+    case WL_DISCONNECTED: return "DISCONNECTED";
+    default: return "UNKNOWN";
+  }
+}
+
+void debugWifi(const char* tag) {
+  wl_status_t st = WiFi.status();
+  Serial.print("[WiFi] ");
+  Serial.print(tag);
+  Serial.print(" | ");
+  Serial.print(wifiStatusText(st));
+  Serial.print(" (code ");
+  Serial.print((int)st);
+  Serial.print(")");
+  if (st == WL_CONNECTED) {
+    Serial.print(" | SSID=");
+    Serial.print(WiFi.SSID());
+    Serial.print(" | IP=");
+    Serial.print(WiFi.localIP());
+    Serial.print(" | RSSI=");
+    Serial.print(WiFi.RSSI());
+    Serial.println(" dBm");
+  } else {
+    Serial.print(" | trying SSID=");
+    Serial.println(WIFI_SSID);
+  }
+}
+
+void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
+  switch (event) {
+    case ARDUINO_EVENT_WIFI_STA_START:
+      Serial.println("[WiFi] STA started");
+      break;
+    case ARDUINO_EVENT_WIFI_STA_CONNECTED:
+      Serial.print("[WiFi] Associated to AP, channel ");
+      Serial.println(WiFi.channel());
+      break;
+    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+      Serial.print("[WiFi] Got IP: ");
+      Serial.println(WiFi.localIP());
+      debugWifi("GOT_IP");
+      break;
+    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+      Serial.print("[WiFi] Disconnected, reason=");
+      Serial.println(info.wifi_sta_disconnected.reason);
+      debugWifi("DISCONNECTED");
+      break;
+    default:
+      break;
+  }
+}
 
 // ======================== RELAYS ========================
 void initRelays() {
@@ -299,11 +364,13 @@ void updateLiveState(const char* stage, const char* circuit, bool measuring,
   patchSystemState(doc);
 }
 
-void sendHeartbeat() {
+bool sendHeartbeat() {
   StaticJsonDocument<256> doc;
   doc["connection"] = "online";
   doc["last_seen"] = isoTimestamp();
-  patchSystemState(doc);
+  String payload;
+  serializeJson(doc, payload);
+  return supabaseRequest("PATCH", "system_state?id=eq.1", payload);
 }
 
 void markCommandDone(long commandId) {
@@ -609,59 +676,122 @@ void pollCommands() {
 // ======================== SETUP / LOOP ========================
 void setup() {
   Serial.begin(115200);
+  delay(1000);
+  Serial.println();
+  Serial.println("=== FYP ESP32 BOOT ===");
+  Serial.println("If you see this, Serial Monitor is working (115200)");
+  Serial.flush();
+
+  Serial.println("[Boot] Relays + outputs...");
   initRelays();
   initOutputs();
 
   pinMode(VOLTAGE_ADC_PIN, INPUT);
   analogSetAttenuation(ADC_11db);
 
+  Serial.println("[Boot] I2C + LCD (SDA=32 SCL=33)...");
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   lcd.init();
   lcd.backlight();
   lcdShow("FYP Controller", "Starting...");
+  Serial.println("[Boot] LCD OK");
 
 #if !DEMO_MODE
   ina219Ok = ina219.begin();
   if (ina219Ok) ina219.setCalibration_32V_2A();
-  else lcdShow("INA219 Error", "Check I2C");
+  else {
+    lcdShow("INA219 Error", "Check I2C");
+    Serial.println("[I2C] INA219 not found — check SDA=32 SCL=33");
+  }
 #else
   ina219Ok = false;
+  Serial.println("[DEMO] DEMO_MODE=1 — synthetic sensor data");
 #endif
 
+  WiFi.onEvent(onWifiEvent);
   WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
+  Serial.print("[WiFi] Connecting to SSID: ");
+  Serial.println(WIFI_SSID);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   lcdShow("WiFi", "Connecting...");
+
   int tries = 0;
   while (WiFi.status() != WL_CONNECTED && tries < 40) {
     delay(500);
     tries++;
+    Serial.print(".");
+    if (tries % 4 == 0) {
+      Serial.println();
+      debugWifi("connecting");
+    }
   }
+  Serial.println();
 
   if (WiFi.status() == WL_CONNECTED) {
+    lastWifiConnected = true;
     configTime(0, 0, "pool.ntp.org");
     lcdShow("Online", WiFi.localIP().toString().c_str());
+    debugWifi("setup OK");
+    Serial.println("[WiFi] Cloud heartbeat starting...");
     sendHeartbeat();
+    Serial.println("[WiFi] If website still Offline, check SUPABASE_URL/KEY in config.h");
   } else {
+    lastWifiConnected = false;
     lcdShow("WiFi Failed", "Check config.h");
+    debugWifi("setup FAILED");
+    Serial.println("[WiFi] Fix: SSID/password in config.h, use 2.4GHz WiFi, move closer to AP");
   }
 
+  lastWifiDebugMs = millis();
   delay(800);
   lcdShow("Ready", "");
+  Serial.println("[System] Ready — waiting for commands");
+  Serial.flush();
 }
 
 void loop() {
+  static unsigned long lastAliveMs = 0;
   unsigned long now = millis();
+  bool connected = (WiFi.status() == WL_CONNECTED);
 
-  if (WiFi.status() == WL_CONNECTED) {
+  if (now - lastAliveMs >= 10000) {
+    lastAliveMs = now;
+    Serial.print("[Alive] uptime=");
+    Serial.print(now / 1000);
+    Serial.print("s WiFi=");
+    Serial.println(connected ? "ON" : "OFF");
+  }
+
+  if (connected != lastWifiConnected) {
+    lastWifiConnected = connected;
+    debugWifi(connected ? "reconnected" : "lost connection");
+    if (connected) sendHeartbeat();
+  }
+
+  if (now - lastWifiDebugMs >= WIFI_DEBUG_INTERVAL_MS) {
+    lastWifiDebugMs = now;
+    debugWifi("periodic");
+  }
+
+  if (connected) {
     if (now - lastHeartbeat >= HEARTBEAT_MS) {
       lastHeartbeat = now;
-      sendHeartbeat();
+      if (!sendHeartbeat()) {
+        Serial.println("[WiFi] Heartbeat to Supabase failed — check internet/API key");
+      }
     }
     if (now - lastPoll >= COMMAND_POLL_MS) {
       lastPoll = now;
       pollCommands();
     }
   } else {
+    static unsigned long lastReconnectMsg = 0;
+    if (now - lastReconnectMsg >= 5000) {
+      lastReconnectMsg = now;
+      Serial.println("[WiFi] Not connected — auto-reconnecting...");
+      debugWifi("reconnect");
+    }
     WiFi.reconnect();
   }
 
