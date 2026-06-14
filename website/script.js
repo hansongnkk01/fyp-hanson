@@ -14,8 +14,9 @@
     'R5 P→FW', 'R6 P→2S', 'R7 Vibration', 'R8 —',
   ];
 
-  /** ESP32 heartbeat every 2s — stale after 8s = offline */
-  const HEARTBEAT_STALE_MS = 8000;
+  /** ESP32 heartbeat every 2s — longer tolerance while measuring */
+  const HEARTBEAT_STALE_MS = 12000;
+  const MEASURING_STALE_MS = 45000;
   const STATE_POLL_MS = 2500;
 
   const STAGE_LABELS = {
