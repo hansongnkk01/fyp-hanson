@@ -76,10 +76,13 @@ bool activeCircuitIsFw = true;
 long pendingResetCommandId = 0;
 bool lastWifiConnected = false;
 unsigned long lastWifiDebugMs = 0;
+String bootTimestamp = "";
+bool bootGuardDone = false;
 
 #define WIFI_DEBUG_INTERVAL_MS 30000
 
 void pollCommandsDuringMeasure();
+void runBootGuard();
 
 // ======================== WIFI DEBUG ========================
 const char* wifiStatusText(wl_status_t status) {
@@ -437,6 +440,93 @@ void markCommandError(long commandId, const char* message) {
   supabaseRequest("PATCH", "commands?id=eq." + String(commandId), payload);
 }
 
+bool waitForNtpTime(int maxTries = 15) {
+  struct tm timeinfo;
+  for (int i = 0; i < maxTries; i++) {
+    if (getLocalTime(&timeinfo)) return true;
+    delay(500);
+  }
+  return false;
+}
+
+bool isCommandBeforeBoot(const char* createdAt) {
+  if (!createdAt || bootTimestamp.length() == 0) return false;
+  return String(createdAt) < bootTimestamp;
+}
+
+int cancelAllQueuedCommands() {
+  StaticJsonDocument<256> doc;
+  doc["status"] = "error";
+  doc["error_message"] = "Cancelled on ESP32 boot";
+  doc["processed_at"] = isoTimestamp();
+  String payload;
+  serializeJson(doc, payload);
+  int n = 0;
+  if (supabaseRequest("PATCH", "commands?status=eq.pending", payload)) n++;
+  if (supabaseRequest("PATCH", "commands?status=eq.processing", payload)) n++;
+  return n;
+}
+
+int cancelStaleCommandsBeforeBoot() {
+  String resp;
+  if (!supabaseRequest("GET",
+      "commands?or=(status.eq.pending,status.eq.processing)&order=created_at.asc&limit=30",
+      "", &resp)) {
+    return 0;
+  }
+  if (resp.length() < 3 || resp == "[]") return 0;
+
+  DynamicJsonDocument doc(3072);
+  if (deserializeJson(doc, resp)) return 0;
+
+  int cancelled = 0;
+  for (JsonObject row : doc.as<JsonArray>()) {
+    long id = row["id"] | 0;
+    const char* createdAt = row["created_at"];
+    const char* cmd = row["command"];
+    if (id == 0) continue;
+    if (!isCommandBeforeBoot(createdAt)) continue;
+
+    markCommandError(id, "Cancelled on ESP32 boot — send a new command");
+    Serial.printf("[Boot] Cancelled stale id=%ld (%s)\n", id, cmd ? cmd : "?");
+    cancelled++;
+  }
+  return cancelled;
+}
+
+void runBootGuard() {
+  Serial.println("[Boot] Running boot guard...");
+  allRelaysOff();
+  setLeds(false, false);
+  isMeasuring = false;
+  stopRequested = false;
+  pendingCommandId = 0;
+  pendingResetCommandId = 0;
+  currentMeasurementId = "";
+
+  bootTimestamp = isoTimestamp();
+  Serial.print("[Boot] Guard timestamp: ");
+  Serial.println(bootTimestamp);
+
+  int cancelled = 0;
+  if (waitForNtpTime(3)) {
+    bootTimestamp = isoTimestamp();
+    Serial.print("[Boot] NTP synced, guard timestamp: ");
+    Serial.println(bootTimestamp);
+    cancelled = cancelStaleCommandsBeforeBoot();
+  } else {
+    Serial.println("[Boot] NTP not ready — cancelling all queued commands");
+    cancelled = cancelAllQueuedCommands();
+    bootTimestamp = isoTimestamp();
+  }
+
+  Serial.printf("[Boot] Stale commands cleared: %d\n", cancelled);
+  lcdShow("Ready", "");
+  patchIdleReady();
+  bootGuardDone = true;
+  Serial.println("[Boot] Guard complete — will only accept new website commands");
+}
+
 bool uploadSamples(const char* circuitKey, const char* circuitName, int count) {
   DynamicJsonDocument doc(4096);
   JsonArray arr = doc.to<JsonArray>();
@@ -671,7 +761,21 @@ bool pollAndProcessOneCommand(const String& queryPath) {
   JsonObject cmd = doc[0];
   long id = cmd["id"] | 0;
   const char* command = cmd["command"];
+  const char* createdAt = cmd["created_at"];
   if (!command || id == 0) return false;
+
+  if (!bootGuardDone) {
+    Serial.println("[Command] Ignored — boot guard not finished yet");
+    return false;
+  }
+
+  if (isCommandBeforeBoot(createdAt)) {
+    Serial.printf("[Command] Rejected stale id=%ld (%s)\n", id, command);
+    markCommandError(id, "Ignored — command queued before ESP32 boot");
+    return true;
+  }
+
+  Serial.printf("[Command] Processing id=%ld cmd=%s\n", id, command);
 
   StaticJsonDocument<128> patch;
   patch["status"] = "processing";
@@ -719,7 +823,7 @@ void pollCommandsDuringMeasure() {
 }
 
 void pollCommands() {
-  if (isMeasuring) return;
+  if (!bootGuardDone || isMeasuring) return;
   pollAndProcessOneCommand(
     "commands?status=eq.pending&order=created_at.asc&limit=1");
 }
@@ -784,6 +888,7 @@ void setup() {
     configTime(0, 0, "pool.ntp.org");
     lcdShow("Online", WiFi.localIP().toString().c_str());
     debugWifi("setup OK");
+    runBootGuard();
     Serial.println("[WiFi] Cloud heartbeat starting...");
     sendHeartbeat();
     Serial.println("[WiFi] If website still Offline, check SUPABASE_URL/KEY in config.h");
@@ -796,8 +901,12 @@ void setup() {
 
   lastWifiDebugMs = millis();
   delay(800);
-  lcdShow("Ready", "");
-  patchIdleReady();
+  if (!bootGuardDone) {
+    lcdShow("Ready", "");
+  }
+  if (WiFi.status() == WL_CONNECTED && bootGuardDone) {
+    patchIdleReady();
+  }
   Serial.println("[System] Ready — waiting for commands");
   Serial.flush();
 }
@@ -819,6 +928,10 @@ void loop() {
     lastWifiConnected = connected;
     debugWifi(connected ? "reconnected" : "lost connection");
     if (connected) {
+      if (!bootGuardDone) {
+        configTime(0, 0, "pool.ntp.org");
+        runBootGuard();
+      }
       sendHeartbeat();
     } else {
       patchConnectionOnly(false);

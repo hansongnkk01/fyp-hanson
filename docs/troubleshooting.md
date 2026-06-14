@@ -6,11 +6,12 @@
 - Serial monitor @ 115200 for HTTP errors.
 - Confirm `system_state` row exists (`id=1`).
 
-## Commands stay `pending`
+## Commands stay `pending` or auto-run on reboot
 
-- ESP32 must be on WiFi with internet.
-- Only one measure at a time; check `is_measuring` in `system_state`.
-- Run migration if old command names still in CHECK constraint.
+- **Fixed in firmware:** boot guard cancels `pending`/`processing` commands older than boot time on startup.
+- If ESP32 was off when you clicked Measure, re-click after board shows **Online**.
+- Clear manually in SQL if needed:
+  `UPDATE commands SET status='error' WHERE status IN ('pending','processing');`
 
 ## No measurement data on website
 
