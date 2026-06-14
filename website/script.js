@@ -14,6 +14,24 @@
     'R5 P→FW', 'R6 P→2S', 'R7 Vibration', 'R8 —',
   ];
 
+  /** ESP32 heartbeat every 2s — stale after 8s = offline */
+  const HEARTBEAT_STALE_MS = 8000;
+  const STATE_POLL_MS = 2500;
+
+  const STAGE_LABELS = {
+    idle: 'Idle',
+    measuring_fw: 'Measuring FW',
+    fw_measured: 'FW Measured',
+    measuring_2s: 'Measuring 2S',
+    twos_measured: '2S Measured',
+  };
+
+  const CIRCUIT_LABELS = {
+    none: 'None',
+    full_wave: 'Full-Wave Bridge',
+    two_stage_cwvm: '2-Stage CWVM',
+  };
+
   let sb = null;
   let systemState = {};
   let summaries = { full_wave: null, two_stage_cwvm: null };
@@ -152,19 +170,72 @@
     samples[circuitKey] = data || [];
   }
 
+  function isDeviceOnline(state) {
+    if (!state || state.connection !== 'online') return false;
+    if (!state.last_seen) return false;
+    const age = Date.now() - new Date(state.last_seen).getTime();
+    return age >= 0 && age < HEARTBEAT_STALE_MS;
+  }
+
+  function formatLastSeen(iso) {
+    if (!iso) return '—';
+    const age = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+    if (age < 5) return 'just now';
+    if (age < 60) return `${age}s ago`;
+    return `${Math.floor(age / 60)}m ago`;
+  }
+
+  function formatStage(stage, online) {
+    if (!online) return '—';
+    return STAGE_LABELS[stage] || stage || '—';
+  }
+
+  function formatCircuit(circuit, online) {
+    if (!online) return '—';
+    return CIRCUIT_LABELS[circuit] || circuit || 'none';
+  }
+
+  async function fetchSystemState() {
+    const { data, error } = await sb.from('system_state').select('*').eq('id', 1).maybeSingle();
+    if (error) {
+      console.error('system_state poll failed', error);
+      return;
+    }
+    if (data) updateStatusBar(data);
+  }
+
   function updateStatusBar(state) {
     systemState = state || {};
-    const online = state.connection === 'online';
+    const online = isDeviceOnline(state);
+
     $('connDot').classList.toggle('online', online);
+    $('connDot').classList.toggle('offline-stale', !online);
     $('connText').textContent = online ? 'Online' : 'Offline';
-    $('stageText').textContent = state.stage || 'idle';
-    $('circuitText').textContent = state.active_circuit || 'none';
-    $('lcdText').textContent = state.lcd_message || 'Ready';
-    $('ledText').textContent =
-      `FW ${state.led_fw ? 'on' : 'off'} · 2S ${state.led_2s ? 'on' : 'off'}`;
+    $('stageText').textContent = formatStage(state.stage, online);
+    $('circuitText').textContent = formatCircuit(state.active_circuit, online);
+    $('lcdText').textContent = online ? (state.lcd_message || '—') : '—';
+    $('lastSeenText').textContent = state.last_seen
+      ? `${formatLastSeen(state.last_seen)}${online ? '' : ' (stale)'}`
+      : '—';
+
+    const ledFw = online && !!state.led_fw;
+    const led2s = online && !!state.led_2s;
+    const ledEl = $('ledText');
+    ledEl.textContent = `FW ${ledFw ? 'ON' : 'off'} · 2S ${led2s ? 'ON' : 'off'}`;
+    ledEl.className = 'led-status' + (ledFw ? ' fw-on' : '') + (led2s ? ' ts-on' : '');
+
+    const statusBar = $('statusBar');
+    if (statusBar) {
+      statusBar.classList.toggle('device-offline', !online);
+      statusBar.classList.toggle('device-measuring', online && !!state.is_measuring);
+    }
 
     const relayBox = $('relayIndicators');
     relayBox.innerHTML = '';
+    if (!online) {
+      updateMeasureButtons();
+      return;
+    }
     const active = Array.isArray(state.active_relays) ? state.active_relays : [];
     if (active.length) {
       active.forEach((label) => {
@@ -187,7 +258,7 @@
   }
 
   function isMeasuring() {
-    return !!systemState.is_measuring;
+    return isDeviceOnline(systemState) && !!systemState.is_measuring;
   }
 
   function measuringCircuit() {
@@ -199,10 +270,11 @@
   }
 
   function updateMeasureButtons() {
+    const online = isDeviceOnline(systemState);
     const busy = isMeasuring();
     const active = measuringCircuit();
-    $('btnMeasureFw').disabled = busy;
-    $('btnMeasure2s').disabled = busy;
+    $('btnMeasureFw').disabled = !online || busy;
+    $('btnMeasure2s').disabled = !online || busy;
     $('btnMeasureFw').textContent = busy && active === CIRCUIT.FW ? 'Measuring…' : 'Measure FW';
     $('btnMeasure2s').textContent = busy && active === CIRCUIT.TS ? 'Measuring…' : 'Measure 2S';
   }
@@ -279,7 +351,18 @@
       active_relays: [],
     };
     await sb.from('system_state').update(patch).eq('id', 1);
-    updateStatusBar({ ...systemState, ...patch, connection: systemState.connection });
+    await fetchSystemState();
+  }
+
+  function startStatePolling() {
+    setInterval(() => {
+      fetchSystemState();
+    }, STATE_POLL_MS);
+    setInterval(() => {
+      if (systemState.last_seen) {
+        updateStatusBar({ ...systemState });
+      }
+    }, 1000);
   }
 
   function setupRealtime() {
@@ -316,6 +399,7 @@
 
     await Promise.all([loadLatestSummary(CIRCUIT.FW), loadLatestSummary(CIRCUIT.TS)]);
     setupRealtime();
+    startStatePolling();
 
     $('btnMeasureFw').addEventListener('click', () => sendCommand('MEASURE_FW_CIRCUIT'));
     $('btnMeasure2s').addEventListener('click', () => sendCommand('MEASURE_2S_CIRCUIT'));

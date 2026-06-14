@@ -32,11 +32,15 @@
       </div>
       <div class="status-item">
         <span class="status-label">LCD</span>
-        <span id="lcdText">Ready</span>
+        <span id="lcdText">—</span>
       </div>
       <div class="status-item">
         <span class="status-label">LEDs</span>
-        <span id="ledText">FW off · 2S off</span>
+        <span id="ledText" class="led-status">FW off · 2S off</span>
+      </div>
+      <div class="status-item status-item-muted">
+        <span class="status-label">Last seen</span>
+        <span id="lastSeenText">—</span>
       </div>
     </div>
     <div class="relay-indicators" id="relayIndicators" aria-label="Active relays"></div>

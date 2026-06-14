@@ -346,6 +346,8 @@ void updateLiveState(const char* stage, const char* circuit, bool measuring,
                      bool ledFw, bool led2s, const char* lcdMsg,
                      JsonArray* relayLabels = nullptr) {
   StaticJsonDocument<512> doc;
+  doc["connection"] = "online";
+  doc["last_seen"] = isoTimestamp();
   doc["stage"] = stage;
   doc["active_circuit"] = circuit;
   doc["is_measuring"] = measuring;
@@ -360,6 +362,49 @@ void updateLiveState(const char* stage, const char* circuit, bool measuring,
     doc["active_relays"] = *relayLabels;
   } else {
     doc["active_relays"].to<JsonArray>();
+  }
+  patchSystemState(doc);
+}
+
+void patchIdleReady() {
+  StaticJsonDocument<384> doc;
+  doc["connection"] = WiFi.status() == WL_CONNECTED ? "online" : "offline";
+  doc["last_seen"] = isoTimestamp();
+  doc["stage"] = "idle";
+  doc["active_circuit"] = "none";
+  doc["is_measuring"] = false;
+  doc["led_fw"] = false;
+  doc["led_2s"] = false;
+  doc["lcd_message"] = "Ready";
+  doc["relay_mask"] = 0;
+  doc["active_relays"].to<JsonArray>();
+  patchSystemState(doc);
+}
+
+void patchConnectionOnly(bool online) {
+  StaticJsonDocument<128> doc;
+  doc["connection"] = online ? "online" : "offline";
+  doc["last_seen"] = isoTimestamp();
+  patchSystemState(doc);
+}
+
+void patchMeasureProgress(int sampleIndex, int total, bool isFw) {
+  char lcdMsg[40];
+  snprintf(lcdMsg, sizeof(lcdMsg), "%s %d/%ds",
+           isFw ? "Measuring FW" : "Measuring 2S", sampleIndex + 1, total);
+
+  StaticJsonDocument<512> doc;
+  doc["connection"] = "online";
+  doc["last_seen"] = isoTimestamp();
+  doc["stage"] = isFw ? "measuring_fw" : "measuring_2s";
+  doc["active_circuit"] = isFw ? "full_wave" : "two_stage_cwvm";
+  doc["is_measuring"] = true;
+  doc["led_fw"] = isFw;
+  doc["led_2s"] = !isFw;
+  doc["lcd_message"] = lcdMsg;
+  doc["relay_mask"] = getRelayMask();
+  if (currentMeasurementId.length() > 0) {
+    doc["current_measurement_id"] = currentMeasurementId;
   }
   patchSystemState(doc);
 }
@@ -467,6 +512,8 @@ bool sampleLoop(int count) {
 #endif
     pSamples[t] = vSamples[t] * iSamples[t];
 
+    patchMeasureProgress(t, count, activeCircuitIsFw);
+
     if (t < count - 1) {
       unsigned long start = millis();
       while (millis() - start < (unsigned long)SAMPLE_INTERVAL_MS) {
@@ -490,6 +537,8 @@ void performEmergencyReset(long commandId) {
   long measureCmdId = pendingCommandId;
 
   StaticJsonDocument<384> doc;
+  doc["connection"] = "online";
+  doc["last_seen"] = isoTimestamp();
   doc["stage"] = "idle";
   doc["active_circuit"] = "none";
   doc["is_measuring"] = false;
@@ -591,6 +640,8 @@ bool runMeasurement(bool isFw, long commandId) {
   }
 
   StaticJsonDocument<384> doneDoc;
+  doneDoc["connection"] = "online";
+  doneDoc["last_seen"] = isoTimestamp();
   doneDoc["stage"] = stageDone;
   doneDoc["active_circuit"] = "none";
   doneDoc["is_measuring"] = false;
@@ -746,6 +797,7 @@ void setup() {
   lastWifiDebugMs = millis();
   delay(800);
   lcdShow("Ready", "");
+  patchIdleReady();
   Serial.println("[System] Ready — waiting for commands");
   Serial.flush();
 }
@@ -766,7 +818,11 @@ void loop() {
   if (connected != lastWifiConnected) {
     lastWifiConnected = connected;
     debugWifi(connected ? "reconnected" : "lost connection");
-    if (connected) sendHeartbeat();
+    if (connected) {
+      sendHeartbeat();
+    } else {
+      patchConnectionOnly(false);
+    }
   }
 
   if (now - lastWifiDebugMs >= WIFI_DEBUG_INTERVAL_MS) {

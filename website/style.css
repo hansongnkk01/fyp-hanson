@@ -110,6 +110,43 @@ body {
   box-shadow: 0 0 10px var(--green);
 }
 
+.status-dot.offline-stale {
+  background: var(--danger);
+  box-shadow: 0 0 8px var(--danger);
+}
+
+.status-bar.device-offline {
+  opacity: 0.85;
+}
+
+.status-bar.device-offline .status-item:not(:first-child) span:last-child {
+  color: var(--text-muted);
+}
+
+.status-bar.device-measuring {
+  border-bottom-color: rgba(0, 255, 136, 0.45);
+}
+
+.status-item-muted .status-label,
+.status-item-muted span:last-child {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.led-status.fw-on {
+  color: #60a5fa;
+  text-shadow: 0 0 8px rgba(96, 165, 250, 0.5);
+}
+
+.led-status.ts-on {
+  color: #fb923c;
+  text-shadow: 0 0 8px rgba(251, 146, 60, 0.5);
+}
+
+.led-status.fw-on.ts-on {
+  color: var(--accent);
+}
+
 .relay-indicators {
   display: flex;
   gap: 0.35rem;
