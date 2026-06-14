@@ -6,7 +6,17 @@
 - Serial monitor @ 115200 for HTTP errors.
 - Confirm `system_state` row exists (`id=1`).
 
-## Website empty after measure (LCD shows "FW Measured")
+## Invalid UUID / PATCH system_state 400
+
+- Fixed `newMeasurementId()` format (was 5 hyphens instead of 4).
+- Run once in Supabase if heartbeat still fails:
+  `UPDATE system_state SET current_measurement_id = NULL WHERE id = 1;`
+  `UPDATE commands SET status='error' WHERE status IN ('pending','processing');`
+
+## Unwanted auto-measure FW when clicking 2S
+
+- Old failed clicks left `pending` MEASURE_FW in queue; ESP32 ran oldest first.
+- Boot now clears **all** queued commands; website cancels other pending measures on new click.
 
 - Check `commands` table: if `Failed to upload measurement samples/summary`, see Serial Monitor `[HTTP]` lines.
 - Re-upload latest firmware (row-by-row sample upload + `secureClient.stop()` fix).

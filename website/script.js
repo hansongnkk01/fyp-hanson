@@ -301,6 +301,13 @@
   }
 
   async function sendCommand(command) {
+    if (command === 'MEASURE_FW_CIRCUIT' || command === 'MEASURE_2S_CIRCUIT') {
+      await sb.from('commands').update({
+        status: 'error',
+        error_message: 'Superseded by new button click',
+        processed_at: new Date().toISOString(),
+      }).eq('status', 'pending').in('command', ['MEASURE_FW_CIRCUIT', 'MEASURE_2S_CIRCUIT']);
+    }
     const { error } = await sb.from('commands').insert({ command, status: 'pending' });
     if (error) alert('Command failed: ' + error.message);
   }

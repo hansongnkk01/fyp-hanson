@@ -359,12 +359,29 @@ String newMeasurementId() {
   esp_fill_random(b, 16);
   b[6] = (b[6] & 0x0f) | 0x40;
   b[8] = (b[8] & 0x3f) | 0x80;
-  char buf[37];
+  char buf[40];
+  // UUID v4: 8-4-4-4-12 hex (exactly 36 chars, 4 hyphens)
   snprintf(buf, sizeof(buf),
-    "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
-    b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
-    b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]);
+    "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+    b[0], b[1], b[2], b[3],
+    b[4], b[5],
+    b[6], b[7],
+    b[8], b[9],
+    b[10], b[11], b[12], b[13], b[14], b[15]);
+  buf[36] = '\0';
+  Serial.print("[UUID] ");
+  Serial.println(buf);
   return String(buf);
+}
+
+bool isValidMeasurementId(const String& id) {
+  return id.length() == 36;
+}
+
+void appendMeasurementId(JsonDocument& doc) {
+  if (isValidMeasurementId(currentMeasurementId)) {
+    doc["current_measurement_id"] = currentMeasurementId;
+  }
 }
 
 void patchSystemState(JsonDocument& doc) {
@@ -387,9 +404,7 @@ void updateLiveState(const char* stage, const char* circuit, bool measuring,
   doc["led_2s"] = led2s;
   doc["lcd_message"] = lcdMsg;
   doc["relay_mask"] = getRelayMask();
-  if (currentMeasurementId.length() > 0) {
-    doc["current_measurement_id"] = currentMeasurementId;
-  }
+  appendMeasurementId(doc);
   if (relayLabels) {
     doc["active_relays"] = *relayLabels;
   } else {
@@ -410,6 +425,7 @@ void patchIdleReady() {
   doc["lcd_message"] = "Ready";
   doc["relay_mask"] = 0;
   doc["active_relays"].to<JsonArray>();
+  doc["current_measurement_id"] = nullptr;
   patchSystemState(doc);
 }
 
@@ -435,9 +451,7 @@ void patchMeasureProgress(int sampleIndex, int total, bool isFw) {
   doc["led_2s"] = !isFw;
   doc["lcd_message"] = lcdMsg;
   doc["relay_mask"] = getRelayMask();
-  if (currentMeasurementId.length() > 0) {
-    doc["current_measurement_id"] = currentMeasurementId;
-  }
+  appendMeasurementId(doc);
   patchSystemState(doc);
 }
 
@@ -534,26 +548,42 @@ void runBootGuard() {
   currentMeasurementId = "";
 
   bootTimestamp = isoTimestamp();
-  Serial.print("[Boot] Guard timestamp: ");
-  Serial.println(bootTimestamp);
-
-  int cancelled = 0;
   if (waitForNtpTime(3)) {
-    bootTimestamp = isoTimestamp();
-    Serial.print("[Boot] NTP synced, guard timestamp: ");
-    Serial.println(bootTimestamp);
-    cancelled = cancelStaleCommandsBeforeBoot();
-  } else {
-    Serial.println("[Boot] NTP not ready — cancelling all queued commands");
-    cancelled = cancelAllQueuedCommands();
     bootTimestamp = isoTimestamp();
   }
 
-  Serial.printf("[Boot] Stale commands cleared: %d\n", cancelled);
+  // Always wipe command queue on boot — no auto-measure from old clicks
+  int cancelled = cancelAllQueuedCommands();
+  Serial.printf("[Boot] Queued commands cancelled: %d\n", cancelled);
+
   lcdShow("Ready", "");
   patchIdleReady();
   bootGuardDone = true;
-  Serial.println("[Boot] Guard complete — will only accept new website commands");
+  Serial.println("[Boot] Guard complete — only NEW website clicks will run");
+}
+
+void cancelOtherPendingMeasures(long keepId) {
+  String resp;
+  if (!supabaseRequest("GET",
+      "commands?status=eq.pending&order=created_at.asc&limit=20", "", &resp)) {
+    return;
+  }
+  if (resp.length() < 3 || resp == "[]") return;
+
+  DynamicJsonDocument doc(2048);
+  if (deserializeJson(doc, resp)) return;
+
+  for (JsonObject row : doc.as<JsonArray>()) {
+    long id = row["id"] | 0;
+    const char* cmd = row["command"];
+    if (id == 0 || id == keepId || !cmd) continue;
+    if (strcmp(cmd, "MEASURE_FW_CIRCUIT") != 0 &&
+        strcmp(cmd, "MEASURE_2S_CIRCUIT") != 0) {
+      continue;
+    }
+    markCommandError(id, "Superseded — only one measure at a time");
+    Serial.printf("[Command] Cancelled queued id=%ld (%s)\n", id, cmd);
+  }
 }
 
 void touchHeartbeat() {
@@ -848,6 +878,8 @@ bool pollAndProcessOneCommand(const String& queryPath) {
   }
 
   Serial.printf("[Command] Processing id=%ld cmd=%s\n", id, command);
+
+  cancelOtherPendingMeasures(id);
 
   StaticJsonDocument<128> patch;
   patch["status"] = "processing";
