@@ -293,51 +293,57 @@ String supabaseUrl(const String& path) {
 }
 
 bool supabaseRequest(const char* method, const String& path, const String& body,
-                     String* responseOut = nullptr, const char* prefer = "return=minimal") {
-  if (WiFi.status() != WL_CONNECTED) return false;
+                     String* responseOut = nullptr) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[HTTP] WiFi not connected");
+    return false;
+  }
 
   secureClient.stop();
   delay(10);
 
   HTTPClient http;
   secureClient.setInsecure();
-  http.setTimeout(20000);
-  if (!http.begin(secureClient, supabaseUrl(path))) return false;
+  if (!http.begin(secureClient, supabaseUrl(path))) {
+    Serial.println("[HTTP] begin() failed");
+    secureClient.stop();
+    return false;
+  }
 
+  http.setTimeout(20000);
   http.addHeader("apikey", SUPABASE_KEY);
   http.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
   http.addHeader("Content-Type", "application/json");
-  if (prefer && prefer[0]) http.addHeader("Prefer", prefer);
+  if (strcmp(method, "POST") == 0) {
+    http.addHeader("Prefer", "return=minimal");
+  } else {
+    http.addHeader("Prefer", "return=representation");
+  }
 
   int code;
   if (strcmp(method, "GET") == 0) code = http.GET();
   else if (strcmp(method, "POST") == 0) code = http.POST(body);
   else if (strcmp(method, "PATCH") == 0) code = http.PATCH(body);
-  else { http.end(); secureClient.stop(); return false; }
+  else {
+    http.end();
+    secureClient.stop();
+    return false;
+  }
 
   String resp = http.getString();
   http.end();
   secureClient.stop();
 
   if (responseOut) *responseOut = resp;
-  bool ok = (code >= 200 && code < 300);
-  if (!ok) {
+  if (code < 200 || code >= 300) {
     Serial.printf("[HTTP] %s %s -> %d\n", method, path.c_str(), code);
     if (resp.length() > 0) {
-      if (resp.length() > 300) Serial.println(resp.substring(0, 300));
-      else Serial.println(resp);
+      Serial.print("[HTTP] Response: ");
+      Serial.println(resp.substring(0, 240));
     }
+    return false;
   }
-  return ok;
-}
-
-void patchHeartbeatOnly() {
-  StaticJsonDocument<128> doc;
-  doc["connection"] = "online";
-  doc["last_seen"] = isoTimestamp();
-  String payload;
-  serializeJson(doc, payload);
-  supabaseRequest("PATCH", "system_state?id=eq.1", payload);
+  return true;
 }
 
 String isoTimestamp() {
@@ -550,27 +556,42 @@ void runBootGuard() {
   Serial.println("[Boot] Guard complete — will only accept new website commands");
 }
 
+void touchHeartbeat() {
+  StaticJsonDocument<128> doc;
+  doc["connection"] = "online";
+  doc["last_seen"] = isoTimestamp();
+  String payload;
+  serializeJson(doc, payload);
+  supabaseRequest("PATCH", "system_state?id=eq.1", payload);
+}
+
+bool uploadOneSample(const char* circuitKey, const char* circuitName, int index) {
+  StaticJsonDocument<384> doc;
+  doc["measurement_id"] = currentMeasurementId;
+  doc["circuit_key"] = circuitKey;
+  doc["circuit_name"] = circuitName;
+  doc["time_s"] = index;
+  doc["voltage"] = vSamples[index];
+  doc["current"] = iSamples[index];
+  doc["power"] = pSamples[index];
+  String payload;
+  if (serializeJson(doc, payload) == 0) {
+    Serial.println("[Upload] sample JSON serialize failed");
+    return false;
+  }
+  return supabaseRequest("POST", "measurement_samples", payload);
+}
+
 bool uploadSamples(const char* circuitKey, const char* circuitName, int count) {
-  Serial.printf("[Upload] Posting %d samples (id=%s)...\n",
-                count, currentMeasurementId.c_str());
+  Serial.printf("[Upload] Posting %d samples for %s\n", count, circuitKey);
   for (int i = 0; i < count; i++) {
-    StaticJsonDocument<384> doc;
-    doc["measurement_id"] = currentMeasurementId;
-    doc["circuit_key"] = circuitKey;
-    doc["circuit_name"] = circuitName;
-    doc["time_s"] = i;
-    doc["voltage"] = vSamples[i];
-    doc["current"] = iSamples[i];
-    doc["power"] = pSamples[i];
-    String payload;
-    serializeJson(doc, payload);
-    if (!supabaseRequest("POST", "measurement_samples", payload)) {
-      Serial.printf("[Upload] sample row %d FAILED\n", i);
+    if (!uploadOneSample(circuitKey, circuitName, i)) {
+      Serial.printf("[Upload] sample %d/%d failed\n", i + 1, count);
       return false;
     }
-    if (i % 3 == 0) patchHeartbeatOnly();
+    if ((i & 1) == 1) touchHeartbeat();
   }
-  Serial.println("[Upload] Samples OK");
+  Serial.println("[Upload] All samples OK");
   return true;
 }
 
@@ -594,18 +615,18 @@ bool uploadSummary(const char* circuitKey, const char* circuitName, int count) {
   doc["vmax"] = vmax;
   doc["vmin"] = vmin;
   doc["vripple"] = vripple;
-  doc["stabilization_ok"] = stabOk;
   if (stabOk) doc["stabilization_time"] = stab;
+  doc["stabilization_ok"] = stabOk;
 
   String payload;
-  serializeJson(doc, payload);
-  Serial.println("[Upload] Posting summary...");
-  if (!supabaseRequest("POST", "measurement_summary", payload)) {
-    Serial.println("[Upload] summary FAILED");
+  if (serializeJson(doc, payload) == 0) {
+    Serial.println("[Upload] summary JSON serialize failed");
     return false;
   }
-  Serial.println("[Upload] Summary OK");
-  return true;
+  Serial.println("[Upload] Posting summary...");
+  bool ok = supabaseRequest("POST", "measurement_summary", payload);
+  Serial.println(ok ? "[Upload] Summary OK" : "[Upload] Summary FAILED");
+  return ok;
 }
 
 // ======================== DEMO DATA (optional) ========================
@@ -724,8 +745,8 @@ bool runMeasurement(bool isFw, long commandId) {
   updateLiveState(stageMeasuring, circuitKey, true, isFw, !isFw,
                   isFw ? "Measuring FW" : "Measuring 2S", &relays);
 
+  touchHeartbeat();
   buzzerTwoSeconds();
-  patchHeartbeatOnly();
   if (stopRequested) { performEmergencyReset(0); return false; }
 
   setRelay(RELAY_VIBRATION, true);
@@ -754,17 +775,27 @@ bool runMeasurement(bool isFw, long commandId) {
   setLeds(false, false);
 
   buzzerTitTitTit();
-  patchHeartbeatOnly();
-  lcdShow("Uploading", "");
 
-  if (!uploadSamples(circuitKey, circuitName, sampleCount) ||
-      !uploadSummary(circuitKey, circuitName, sampleCount)) {
+  lcdShow("Uploading...", "");
+  touchHeartbeat();
+
+  if (!uploadSamples(circuitKey, circuitName, sampleCount)) {
     lcdShow("Upload Failed", "Check Serial");
-    Serial.println("[Upload] Measurement data NOT saved to Supabase");
-    markCommandError(commandId, "Failed to upload measurement data");
+    markCommandError(commandId, "Failed to upload measurement samples");
     isMeasuring = false;
     pendingCommandId = 0;
-    patchHeartbeatOnly();
+    patchIdleReady();
+    return false;
+  }
+
+  touchHeartbeat();
+
+  if (!uploadSummary(circuitKey, circuitName, sampleCount)) {
+    lcdShow("Upload Failed", "Summary err");
+    markCommandError(commandId, "Failed to upload measurement summary");
+    isMeasuring = false;
+    pendingCommandId = 0;
+    patchIdleReady();
     return false;
   }
 

@@ -6,12 +6,16 @@
 - Serial monitor @ 115200 for HTTP errors.
 - Confirm `system_state` row exists (`id=1`).
 
-## Commands stay `pending` or auto-run on reboot
+## Website empty after measure (LCD shows "FW Measured")
 
-- **Fixed in firmware:** boot guard cancels `pending`/`processing` commands older than boot time on startup.
-- If ESP32 was off when you clicked Measure, re-click after board shows **Online**.
-- Clear manually in SQL if needed:
-  `UPDATE commands SET status='error' WHERE status IN ('pending','processing');`
+- Check `commands` table: if `Failed to upload measurement samples/summary`, see Serial Monitor `[HTTP]` lines.
+- Re-upload latest firmware (row-by-row sample upload + `secureClient.stop()` fix).
+- Confirm rows exist: `SELECT * FROM measurement_summary ORDER BY created_at DESC LIMIT 3;`
+
+## ESP32 shows Offline (stale) during measure
+
+- Normal during upload; website now allows **45s** grace while `is_measuring=true`.
+- If persists, check WiFi RSSI and Serial `[HTTP]` errors.
 
 ## No measurement data on website
 

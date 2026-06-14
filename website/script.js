@@ -14,8 +14,8 @@
     'R5 P→FW', 'R6 P→2S', 'R7 Vibration', 'R8 —',
   ];
 
-  /** ESP32 heartbeat every 2s — longer tolerance while measuring */
-  const HEARTBEAT_STALE_MS = 12000;
+  /** ESP32 heartbeat every 2s — longer grace while measuring (upload can take 20s+) */
+  const HEARTBEAT_STALE_MS = 10000;
   const MEASURING_STALE_MS = 45000;
   const STATE_POLL_MS = 2500;
 
@@ -38,6 +38,7 @@
   let summaries = { full_wave: null, two_stage_cwvm: null };
   let samples = { full_wave: [], two_stage_cwvm: [] };
   let charts = {};
+  let lastKnownStage = 'idle';
 
   const $ = (id) => document.getElementById(id);
 
@@ -175,7 +176,13 @@
     if (!state || state.connection !== 'online') return false;
     if (!state.last_seen) return false;
     const age = Date.now() - new Date(state.last_seen).getTime();
-    return age >= 0 && age < HEARTBEAT_STALE_MS;
+    const limit = state.is_measuring ? MEASURING_STALE_MS : HEARTBEAT_STALE_MS;
+    return age >= 0 && age < limit;
+  }
+
+  function onStageChange(stage) {
+    if (stage === 'fw_measured') loadLatestSummary(CIRCUIT.FW);
+    if (stage === 'twos_measured') loadLatestSummary(CIRCUIT.TS);
   }
 
   function formatLastSeen(iso) {
@@ -208,6 +215,11 @@
   function updateStatusBar(state) {
     systemState = state || {};
     const online = isDeviceOnline(state);
+
+    if (state.stage && state.stage !== lastKnownStage) {
+      onStageChange(state.stage);
+      lastKnownStage = state.stage;
+    }
 
     $('connDot').classList.toggle('online', online);
     $('connDot').classList.toggle('offline-stale', !online);
@@ -272,7 +284,7 @@
 
   function updateMeasureButtons() {
     const online = isDeviceOnline(systemState);
-    const busy = isMeasuring();
+    const busy = !!systemState.is_measuring;
     const active = measuringCircuit();
     $('btnMeasureFw').disabled = !online || busy;
     $('btnMeasure2s').disabled = !online || busy;
@@ -396,7 +408,10 @@
     setupScrollReveal();
 
     const { data } = await sb.from('system_state').select('*').eq('id', 1).maybeSingle();
-    if (data) updateStatusBar(data);
+    if (data) {
+      lastKnownStage = data.stage || 'idle';
+      updateStatusBar(data);
+    }
 
     await Promise.all([loadLatestSummary(CIRCUIT.FW), loadLatestSummary(CIRCUIT.TS)]);
     setupRealtime();
