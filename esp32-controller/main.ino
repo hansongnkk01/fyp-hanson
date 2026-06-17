@@ -26,8 +26,8 @@
 
 // ======================== HARDWARE PINS ========================
 #define RELAY_COUNT       8
-#define RELAY_ON          LOW
-#define RELAY_OFF         HIGH
+#define RELAY_ON          HIGH   // Active-HIGH relay module (LOW = off at boot)
+#define RELAY_OFF         LOW
 const int RELAY_PINS[RELAY_COUNT] = {23, 22, 21, 19, 18, 5, 4, 2};
 
 #define RELAY_V_FW        1
