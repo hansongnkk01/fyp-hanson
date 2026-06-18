@@ -69,6 +69,9 @@ float vSamples[SAMPLE_COUNT];
 float iSamples[SAMPLE_COUNT];
 float pSamples[SAMPLE_COUNT];
 
+float vZeroOffset = 0.0f;
+float iZeroOffset = 0.0f;
+
 bool ina219Ok = false;
 bool isMeasuring = false;
 bool stopRequested = false;
@@ -233,19 +236,55 @@ void lcdShow(const char* line1, const char* line2) {
 }
 
 // ======================== SENSORS ========================
-float readVoltage() {
+int readAdcAverage() {
   long sum = 0;
   for (int i = 0; i < 8; i++) {
     sum += analogRead(VOLTAGE_ADC_PIN);
     delayMicroseconds(100);
   }
-  float adc = sum / 8.0f;
+  return (int)(sum / 8);
+}
+
+/** Raw voltage from divider formula (no zero subtraction). */
+float readVoltageRaw() {
+  float adc = (float)readAdcAverage();
   return (adc / ADC_MAX) * ADC_VREF * CAL_V;
 }
 
-float readCurrent() {
+float readVoltage() {
+  float v = readVoltageRaw() - vZeroOffset;
+  if (v < 0.0f) v = 0.0f;
+  return v;
+}
+
+float readCurrentRaw() {
   if (!ina219Ok) return 0.0f;
   return ina219.getCurrent_mA() / 1000.0f;
+}
+
+float readCurrent() {
+  float i = readCurrentRaw() - iZeroOffset;
+  if (i < 0.0f) i = 0.0f;
+  return i;
+}
+
+/** Baseline with circuit relays ON, vibration OFF — subtract from all samples this run. */
+void calibrateSensorZero() {
+  const int n = 16;
+  float vSum = 0.0f;
+  float iSum = 0.0f;
+  for (int k = 0; k < n; k++) {
+    vSum += readVoltageRaw();
+    iSum += readCurrentRaw();
+    delay(50);
+  }
+  vZeroOffset = vSum / n;
+  iZeroOffset = iSum / n;
+  int adc = readAdcAverage();
+  float pinV = (adc / ADC_MAX) * ADC_VREF;
+  Serial.printf("[Cal] Zero baseline: V_off=%.3f I_off=%.4f ADC=%d pin=%.3fV\n",
+                vZeroOffset, iZeroOffset, adc, pinV);
+  Serial.println("[Cal] Reported V/I will be (raw - baseline), clamped >= 0");
 }
 
 float calcMean(const float* arr, int n) {
@@ -669,11 +708,17 @@ bool sampleLoop(int count) {
     if (stopRequested) return false;
     pollCommandsDuringMeasure();
 
-    vSamples[t] = readVoltage();
-    iSamples[t] = readCurrent();
+    float rawV = readVoltageRaw();
+    float rawI = readCurrentRaw();
+    vSamples[t] = rawV - vZeroOffset;
+    if (vSamples[t] < 0.0f) vSamples[t] = 0.0f;
+    iSamples[t] = rawI - iZeroOffset;
+    if (iSamples[t] < 0.0f) iSamples[t] = 0.0f;
     pSamples[t] = vSamples[t] * iSamples[t];
 
-    Serial.printf("[Sample] t=%d V=%.3f I=%.4f P=%.4f\n", t, vSamples[t], iSamples[t], pSamples[t]);
+    int adc = readAdcAverage();
+    Serial.printf("[Sample] t=%d rawV=%.3f adjV=%.3f I=%.4f P=%.4f ADC=%d\n",
+                  t, rawV, vSamples[t], iSamples[t], pSamples[t], adc);
 
     patchMeasureProgress(t, count, activeCircuitIsFw);
 
@@ -762,6 +807,9 @@ bool runMeasurement(bool isFw, long commandId) {
   }
   updateLiveState(stageMeasuring, circuitKey, true, isFw, !isFw,
                   isFw ? "Measuring FW" : "Measuring 2S", &relays);
+
+  delay(150);
+  calibrateSensorZero();
 
   touchHeartbeat();
   buzzerTwoSeconds();

@@ -3,23 +3,22 @@
 ## Voltage sensor (0–25 V module on GPIO 34)
 
 ### Theory
-Most modules output 0–3.3 V proportional to 0–25 V input:
-`V_real = (ADC / 4095) × 3.3 × CAL_V`
+`V_raw = (ADC / 4095) × 3.3 × CAL_V`
 
-Default in firmware: `CAL_V = 7.576` (because 3.3 × 7.576 ≈ 25).
+Default `CAL_V = 7.576`. Each measurement run auto-subtracts a **zero baseline**
+(read with circuit relays ON, vibration OFF) so idle circuit reports ~0 V.
 
-### Procedure
-1. Connect a known DC voltage from a bench supply (e.g. 5.00 V, 10.00 V) to the sensor input.
-2. Open Arduino Serial Monitor on Slave (or read values Master logs).
-3. Note raw ADC average over 100 readings.
-4. Compute: `CAL_V = V_known / ((ADC/4095) × 3.3)`
-5. Update `CAL_V` in `esp32-slave/main.ino` and re-upload Slave.
+Serial: `rawV` = formula only, `adjV` = after baseline (uploaded to website).
 
-### Example
-- Known voltage: 12.0 V  
-- ADC average: 1500  
-- `(1500/4095)×3.3 = 1.208 V` at ADC  
-- `CAL_V = 12.0 / 1.208 = 9.93` → set `#define CAL_V 9.93f`
+### Scale calibration (if adjV still wrong vs multimeter *with real voltage*)
+1. Apply known DC (e.g. 5.00 V) to circuit while measuring.
+2. Note `rawV` from Serial after baseline step.
+3. `CAL_V_new = CAL_V × (V_multimeter / adjV)`.
+
+### Zero offset
+If `rawV` is ~12 V with no input, the module has DC offset — firmware handles via
+`calibrateSensorZero()` in `main.ino`. Optional manual trim in `config.h`:
+`#define V_ZERO_OFFSET 0.0f` (not added yet — auto only).
 
 ---
 
