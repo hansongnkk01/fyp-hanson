@@ -6,7 +6,13 @@
 - Serial monitor @ 115200 for HTTP errors.
 - Confirm `system_state` row exists (`id=1`).
 
-## Invalid UUID / PATCH system_state 400
+## Old fake/demo charts still showing
+
+- Firmware no longer generates synthetic data (DEMO_MODE removed).
+- Remove `DEMO_MODE` from `config.h` if compile errors.
+- Clear old Supabase rows once:
+  `DELETE FROM measurement_samples; DELETE FROM measurement_summary;`
+- Website clears charts when you click Measure; reloads real data after upload.
 
 - Fixed `newMeasurementId()` format (was 5 hyphens instead of 4).
 - Run once in Supabase if heartbeat still fails:

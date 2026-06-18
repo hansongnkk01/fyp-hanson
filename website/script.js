@@ -109,7 +109,18 @@
     const sorted = [...rows].sort((a, b) => a.time_s - b.time_s);
     chart.data.labels = sorted.map((r) => r.time_s);
     chart.data.datasets[0].data = sorted.map((r) => r[field]);
+    const vals = chart.data.datasets[0].data;
+    const maxVal = vals.length ? Math.max(...vals, 0) : 0;
+    chart.options.scales.y.suggestedMin = 0;
+    chart.options.scales.y.suggestedMax = maxVal < 0.01 ? 0.1 : undefined;
     chart.update();
+  }
+
+  function clearCircuitDisplay(circuitKey) {
+    samples[circuitKey] = [];
+    summaries[circuitKey] = null;
+    renderCircuit(circuitKey);
+    updateConclusionButton();
   }
 
   function setMetrics(panelId, summary) {
@@ -181,6 +192,8 @@
   }
 
   function onStageChange(stage) {
+    if (stage === 'measuring_fw') clearCircuitDisplay(CIRCUIT.FW);
+    if (stage === 'measuring_2s') clearCircuitDisplay(CIRCUIT.TS);
     if (stage === 'fw_measured') loadLatestSummary(CIRCUIT.FW);
     if (stage === 'twos_measured') loadLatestSummary(CIRCUIT.TS);
   }
@@ -424,8 +437,14 @@
     setupRealtime();
     startStatePolling();
 
-    $('btnMeasureFw').addEventListener('click', () => sendCommand('MEASURE_FW_CIRCUIT'));
-    $('btnMeasure2s').addEventListener('click', () => sendCommand('MEASURE_2S_CIRCUIT'));
+    $('btnMeasureFw').addEventListener('click', () => {
+      clearCircuitDisplay(CIRCUIT.FW);
+      sendCommand('MEASURE_FW_CIRCUIT');
+    });
+    $('btnMeasure2s').addEventListener('click', () => {
+      clearCircuitDisplay(CIRCUIT.TS);
+      sendCommand('MEASURE_2S_CIRCUIT');
+    });
     $('btnConclusion').addEventListener('click', toggleConclusion);
     $('btnEmergencyStop').addEventListener('click', () => {
       if (confirm('Emergency STOP — turn off all relays and vibration?')) emergencyStop();

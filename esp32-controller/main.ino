@@ -24,6 +24,10 @@
 #error "Create config.h from config.example.h"
 #endif
 
+#if defined(DEMO_MODE) && DEMO_MODE
+#error "DEMO_MODE removed — delete DEMO_MODE from config.h; firmware uses real sensors only"
+#endif
+
 // ======================== HARDWARE PINS ========================
 #define RELAY_COUNT       8
 #define RELAY_ON          HIGH   // Active-HIGH relay module (LOW = off at boot)
@@ -659,33 +663,17 @@ bool uploadSummary(const char* circuitKey, const char* circuitName, int count) {
   return ok;
 }
 
-// ======================== DEMO DATA (optional) ========================
-#if 0
-void fillDemoSamples(bool isFw) {
-  float base = isFw ? 2.4f : 3.1f;
-  for (int i = 0; i < SAMPLE_COUNT; i++) {
-    vSamples[i] = base + (i < 3 ? i * 0.3f : 0.0f);
-    iSamples[i] = 0.008f + i * 0.0002f;
-    pSamples[i] = vSamples[i] * iSamples[i];
-  }
-}
-#endif
-
 // ======================== MEASUREMENT ========================
 bool sampleLoop(int count) {
   for (int t = 0; t < count; t++) {
     if (stopRequested) return false;
     pollCommandsDuringMeasure();
 
-#if DEMO_MODE
-    float base = activeCircuitIsFw ? 2.4f : 3.1f;
-    vSamples[t] = base + (t < 3 ? t * 0.3f : 0.0f);
-    iSamples[t] = 0.008f + t * 0.0002f;
-#else
     vSamples[t] = readVoltage();
     iSamples[t] = readCurrent();
-#endif
     pSamples[t] = vSamples[t] * iSamples[t];
+
+    Serial.printf("[Sample] t=%d V=%.3f I=%.4f P=%.4f\n", t, vSamples[t], iSamples[t], pSamples[t]);
 
     patchMeasureProgress(t, count, activeCircuitIsFw);
 
@@ -955,17 +943,12 @@ void setup() {
   lcdShow("FYP Controller", "Starting...");
   Serial.println("[Boot] LCD OK");
 
-#if !DEMO_MODE
   ina219Ok = ina219.begin();
   if (ina219Ok) ina219.setCalibration_32V_2A();
   else {
     lcdShow("INA219 Error", "Check I2C");
-    Serial.println("[I2C] INA219 not found — check SDA=32 SCL=33");
+    Serial.println("[I2C] INA219 not found — current reads as 0 A");
   }
-#else
-  ina219Ok = false;
-  Serial.println("[DEMO] DEMO_MODE=1 — synthetic sensor data");
-#endif
 
   WiFi.onEvent(onWifiEvent);
   WiFi.mode(WIFI_STA);
