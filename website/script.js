@@ -14,7 +14,6 @@
     'R5 P→FW', 'R6 P→2S', 'R7 Vibration', 'R8 —',
   ];
 
-  /** ESP32 heartbeat every 2s — longer grace while measuring (upload can take 20s+) */
   const HEARTBEAT_STALE_MS = 10000;
   const MEASURING_STALE_MS = 45000;
   const STATE_POLL_MS = 2500;
@@ -43,29 +42,20 @@
   let localAcqActive = false;
   let localAcqCircuit = null;
   let acqLibPromise = null;
-  /** Generated run held until ESP32 LCD finishes 10/10 (or measured stage). */
-  let pendingLocalRuns = { full_wave: null, two_stage_cwvm: null };
-  let localFallbackTimer = null;
 
   const cfg = () => window.FYP_CONFIG || {};
-
   const $ = (id) => document.getElementById(id);
 
   function delay(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  // ─── Acquisition profile loader ──────────────────────────────
   function loadAcqLib() {
     if (window.FYP_ACQ) return Promise.resolve(window.FYP_ACQ);
     if (acqLibPromise) return acqLibPromise;
     acqLibPromise = new Promise((resolve, reject) => {
       const src = cfg().ACQ_LIB || 'lib/acq-templates.js';
-      const existing = document.querySelector('script[data-acq-lib]');
-      if (existing) {
-        existing.addEventListener('load', () => resolve(window.FYP_ACQ));
-        existing.addEventListener('error', reject);
-        return;
-      }
       const s = document.createElement('script');
       s.src = src;
       s.async = true;
@@ -77,62 +67,18 @@
     return acqLibPromise;
   }
 
-  function clearLocalFallback() {
-    if (localFallbackTimer) {
-      clearTimeout(localFallbackTimer);
-      localFallbackTimer = null;
-    }
-  }
-
-  function commitLocalRun(circuitKey) {
-    const run = pendingLocalRuns[circuitKey];
-    if (!run) return;
-    pendingLocalRuns[circuitKey] = null;
-    clearLocalFallback();
-    samples[circuitKey] = run.samples.slice();
-    summaries[circuitKey] = run.summary;
-    if (localAcqCircuit === circuitKey) {
-      localAcqActive = false;
-      localAcqCircuit = null;
-    }
-    renderCircuit(circuitKey);
-    updateConclusionButton();
-    updateMeasureButtons();
-  }
-
-  /** True when ESP32 LCD shows sampling finished (10/10 or upload/done). */
-  function lcdIndicatesMeasureDone(lcdMsg, circuitKey, stage) {
-    if (!lcdMsg) return false;
-    if (circuitKey === CIRCUIT.FW) {
-      if (lcdMsg.includes('FW Measured')) return true;
-      if (/Measuring FW\s+10\/10s/.test(lcdMsg)) return true;
-      if (stage === 'measuring_fw' && lcdMsg === 'Uploading...') return true;
-      if (stage === 'fw_measured') return true;
-    }
-    if (circuitKey === CIRCUIT.TS) {
-      if (lcdMsg.includes('2S Measured')) return true;
-      if (/Measuring 2S\s+10\/10s/.test(lcdMsg)) return true;
-      if (stage === 'measuring_2s' && lcdMsg === 'Uploading...') return true;
-      if (stage === 'twos_measured') return true;
-    }
-    return false;
-  }
-
-  function tryCommitFromSystemState(state) {
-    if (!acqProfileMode) return;
-    const lcd = state.lcd_message || '';
-    const stage = state.stage || '';
-    if (pendingLocalRuns[CIRCUIT.FW] && lcdIndicatesMeasureDone(lcd, CIRCUIT.FW, stage)) {
-      commitLocalRun(CIRCUIT.FW);
-    }
-    if (pendingLocalRuns[CIRCUIT.TS] && lcdIndicatesMeasureDone(lcd, CIRCUIT.TS, stage)) {
-      commitLocalRun(CIRCUIT.TS);
-    }
-  }
-
-  async function armLocalAcquisition(circuitKey) {
+  /**
+   * Poll systemState every 400 ms until ESP32 reports measure done,
+   * then fill charts with the pre-generated run data.
+   * Falls back after MAX_WAIT_MS regardless.
+   */
+  async function runLocalAcquisition(circuitKey) {
     const acq = await loadAcqLib();
-    pendingLocalRuns[circuitKey] = acq.generateRun(circuitKey);
+    const run = acq.generateRun(circuitKey);
+    const isFw = circuitKey === CIRCUIT.FW;
+    const doneStage = isFw ? 'fw_measured' : 'twos_measured';
+    const doneLcd  = isFw ? 'FW Measured'  : '2S Measured';
+
     localAcqActive = true;
     localAcqCircuit = circuitKey;
     samples[circuitKey] = [];
@@ -140,12 +86,30 @@
     renderCircuit(circuitKey);
     updateMeasureButtons();
 
-    clearLocalFallback();
-    localFallbackTimer = setTimeout(() => {
-      if (pendingLocalRuns[circuitKey]) commitLocalRun(circuitKey);
-    }, 22000);
+    const MAX_WAIT_MS = 30000;
+    const POLL_MS = 400;
+    const started = Date.now();
+
+    while (Date.now() - started < MAX_WAIT_MS) {
+      await delay(POLL_MS);
+      const s   = systemState.stage || '';
+      const lcd = systemState.lcd_message || '';
+      const done = isFw
+        ? (s === 'fw_measured'   || lcd.includes('FW Measured') || (s === 'measuring_fw'  && lcd === 'Uploading...'))
+        : (s === 'twos_measured' || lcd.includes('2S Measured') || (s === 'measuring_2s'  && lcd === 'Uploading...'));
+      if (done) break;
+    }
+
+    samples[circuitKey]   = run.samples.slice();
+    summaries[circuitKey] = run.summary;
+    localAcqActive  = false;
+    localAcqCircuit = null;
+    renderCircuit(circuitKey);
+    updateConclusionButton();
+    updateMeasureButtons();
   }
 
+  // ─── Formatting helpers ───────────────────────────────────────
   function fmt(v, digits = 3) {
     if (v == null || Number.isNaN(v)) return '—';
     return Number(v).toFixed(digits);
@@ -156,18 +120,17 @@
     return `${fmt(s.stabilization_time, 0)} s`;
   }
 
+  // ─── Supabase ─────────────────────────────────────────────────
   function initSupabase() {
-    const cfg = window.FYP_CONFIG || {};
-    const url = cfg.SUPABASE_URL || window.SUPABASE_URL;
-    const key = cfg.SUPABASE_ANON_KEY || window.SUPABASE_ANON_KEY;
-    if (!url || !key) {
-      console.error('Missing config.js (FYP_CONFIG)');
-      return false;
-    }
+    const c = window.FYP_CONFIG || {};
+    const url = c.SUPABASE_URL || window.SUPABASE_URL;
+    const key = c.SUPABASE_ANON_KEY || window.SUPABASE_ANON_KEY;
+    if (!url || !key) { console.error('Missing config.js (FYP_CONFIG)'); return false; }
     sb = window.supabase.createClient(url, key);
     return true;
   }
 
+  // ─── Charts ───────────────────────────────────────────────────
   function chartOptions(yLabel) {
     return {
       responsive: true,
@@ -220,36 +183,14 @@
     chart.update();
   }
 
-  function clearChartDisplay(circuitKey) {
-    samples[circuitKey] = [];
-    summaries[circuitKey] = null;
-    renderCircuit(circuitKey);
-    updateConclusionButton();
-  }
-
-  function cancelLocalAcquisition(circuitKey) {
-    pendingLocalRuns[circuitKey] = null;
-    if (localAcqCircuit === circuitKey) {
-      localAcqActive = false;
-      localAcqCircuit = null;
-    }
-    clearLocalFallback();
-  }
-
-  function clearCircuitDisplay(circuitKey) {
-    cancelLocalAcquisition(circuitKey);
-    clearChartDisplay(circuitKey);
-    updateMeasureButtons();
-  }
-
   function setMetrics(panelId, summary) {
     const panel = $(panelId);
     const map = {
-      vavg: summary ? fmt(summary.vavg) + ' V' : '—',
-      iavg: summary ? fmt(summary.iavg, 4) + ' A' : '—',
-      pavg: summary ? fmt(summary.pavg, 4) + ' W' : '—',
-      vripple: summary ? fmt(summary.vripple) + ' V' : '—',
-      stab: summary ? fmtStab(summary) : '—',
+      vavg:    summary ? fmt(summary.vavg)       + ' V' : '—',
+      iavg:    summary ? fmt(summary.iavg,    4) + ' A' : '—',
+      pavg:    summary ? fmt(summary.pavg,    4) + ' W' : '—',
+      vripple: summary ? fmt(summary.vripple)    + ' V' : '—',
+      stab:    summary ? fmtStab(summary)              : '—',
     };
     panel.querySelectorAll('[data-m]').forEach((el) => {
       el.textContent = map[el.dataset.m] || '—';
@@ -258,12 +199,8 @@
 
   function renderCircuit(circuitKey) {
     const isFw = circuitKey === CIRCUIT.FW;
-    let rows = samples[circuitKey] || [];
-    let summary = summaries[circuitKey];
-    if (acqProfileMode && pendingLocalRuns[circuitKey]) {
-      rows = [];
-      summary = null;
-    }
+    const rows    = samples[circuitKey]   || [];
+    const summary = summaries[circuitKey] || null;
     if (isFw) {
       updateChart(charts.fwV, rows, 'voltage');
       updateChart(charts.fwI, rows, 'current');
@@ -277,6 +214,14 @@
     }
   }
 
+  function clearCircuitDisplay(circuitKey) {
+    samples[circuitKey]   = [];
+    summaries[circuitKey] = null;
+    renderCircuit(circuitKey);
+    updateConclusionButton();
+  }
+
+  // ─── Supabase data load (non-profile mode only) ───────────────
   async function loadLatestSummary(circuitKey) {
     if (acqProfileMode) return;
     const { data, error } = await sb
@@ -307,6 +252,7 @@
     samples[circuitKey] = data || [];
   }
 
+  // ─── Status bar ───────────────────────────────────────────────
   function isDeviceOnline(state) {
     if (!state || state.connection !== 'online') return false;
     if (!state.last_seen) return false;
@@ -317,22 +263,20 @@
 
   function onStageChange(stage) {
     if (acqProfileMode) {
-      if (stage === 'measuring_fw') clearChartDisplay(CIRCUIT.FW);
-      if (stage === 'measuring_2s') clearChartDisplay(CIRCUIT.TS);
-      if (stage === 'fw_measured') commitLocalRun(CIRCUIT.FW);
-      if (stage === 'twos_measured') commitLocalRun(CIRCUIT.TS);
+      if (stage === 'measuring_fw')  clearCircuitDisplay(CIRCUIT.FW);
+      if (stage === 'measuring_2s')  clearCircuitDisplay(CIRCUIT.TS);
       return;
     }
-    if (stage === 'measuring_fw') clearCircuitDisplay(CIRCUIT.FW);
-    if (stage === 'measuring_2s') clearCircuitDisplay(CIRCUIT.TS);
-    if (stage === 'fw_measured') loadLatestSummary(CIRCUIT.FW);
+    if (stage === 'measuring_fw')  clearCircuitDisplay(CIRCUIT.FW);
+    if (stage === 'measuring_2s')  clearCircuitDisplay(CIRCUIT.TS);
+    if (stage === 'fw_measured')   loadLatestSummary(CIRCUIT.FW);
     if (stage === 'twos_measured') loadLatestSummary(CIRCUIT.TS);
   }
 
   function formatLastSeen(iso) {
     if (!iso) return '—';
     const age = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
-    if (age < 5) return 'just now';
+    if (age < 5)  return 'just now';
     if (age < 60) return `${age}s ago`;
     return `${Math.floor(age / 60)}m ago`;
   }
@@ -349,10 +293,7 @@
 
   async function fetchSystemState() {
     const { data, error } = await sb.from('system_state').select('*').eq('id', 1).maybeSingle();
-    if (error) {
-      console.error('system_state poll failed', error);
-      return;
-    }
+    if (error) { console.error('system_state poll failed', error); return; }
     if (data) updateStatusBar(data);
   }
 
@@ -371,9 +312,6 @@
     $('stageText').textContent = formatStage(state.stage, online);
     $('circuitText').textContent = formatCircuit(state.active_circuit, online);
     $('lcdText').textContent = online ? (state.lcd_message || '—') : '—';
-
-    tryCommitFromSystemState(state);
-
     $('lastSeenText').textContent = state.last_seen
       ? `${formatLastSeen(state.last_seen)}${online ? '' : ' (stale)'}`
       : '—';
@@ -392,10 +330,8 @@
 
     const relayBox = $('relayIndicators');
     relayBox.innerHTML = '';
-    if (!online) {
-      updateMeasureButtons();
-      return;
-    }
+    if (!online) { updateMeasureButtons(); return; }
+
     const active = Array.isArray(state.active_relays) ? state.active_relays : [];
     if (active.length) {
       active.forEach((label) => {
@@ -417,10 +353,6 @@
     updateMeasureButtons();
   }
 
-  function isMeasuring() {
-    return isDeviceOnline(systemState) && !!systemState.is_measuring;
-  }
-
   function measuringCircuit() {
     const c = systemState.active_circuit;
     if (c === CIRCUIT.FW || c === CIRCUIT.TS) return c;
@@ -431,11 +363,10 @@
 
   function updateMeasureButtons() {
     const online = isDeviceOnline(systemState);
-    const busy = !!systemState.is_measuring || localAcqActive;
-    const active = measuringCircuit();
-    const canMeasure = acqProfileMode ? !busy : online && !busy;
-    const fwBusy = (busy && active === CIRCUIT.FW) || (localAcqActive && localAcqCircuit === CIRCUIT.FW);
-    const tsBusy = (busy && active === CIRCUIT.TS) || (localAcqActive && localAcqCircuit === CIRCUIT.TS);
+    const busy   = !!systemState.is_measuring || localAcqActive;
+    const canMeasure = acqProfileMode ? !busy : (online && !busy);
+    const fwBusy = localAcqActive && localAcqCircuit === CIRCUIT.FW;
+    const tsBusy = localAcqActive && localAcqCircuit === CIRCUIT.TS;
 
     $('btnMeasureFw').disabled = !canMeasure;
     $('btnMeasure2s').disabled = !canMeasure;
@@ -463,11 +394,11 @@
     if (error) alert('Command failed: ' + error.message);
   }
 
+  // ─── Conclusion ───────────────────────────────────────────────
   function betterMetric(name, fw, ts, higherIsBetter) {
     if (fw == null || ts == null) return '—';
     if (Math.abs(fw - ts) < 1e-6) return 'Tie';
-    const fwWins = higherIsBetter ? fw > ts : fw < ts;
-    return fwWins ? 'Full-Wave' : '2-Stage CWVM';
+    return (higherIsBetter ? fw > ts : fw < ts) ? 'Full-Wave' : '2-Stage CWVM';
   }
 
   function buildConclusionTable() {
@@ -476,11 +407,11 @@
     if (!fw || !ts) return;
 
     const rows = [
-      ['Avg Voltage (V)', fmt(fw.vavg), fmt(ts.vavg), betterMetric('v', fw.vavg, ts.vavg, true)],
-      ['Avg Current (A)', fmt(fw.iavg, 4), fmt(ts.iavg, 4), betterMetric('i', fw.iavg, ts.iavg, true)],
-      ['Avg Power (W)', fmt(fw.pavg, 4), fmt(ts.pavg, 4), betterMetric('p', fw.pavg, ts.pavg, true)],
-      ['Ripple (V)', fmt(fw.vripple), fmt(ts.vripple), betterMetric('r', fw.vripple, ts.vripple, false)],
-      ['Stabilization (s)', fmtStab(fw), fmtStab(ts), betterMetric('s', fw.stabilization_time, ts.stabilization_time, false)],
+      ['Avg Voltage (V)',    fmt(fw.vavg),       fmt(ts.vavg),       betterMetric('v', fw.vavg, ts.vavg, true)],
+      ['Avg Current (A)',    fmt(fw.iavg,    4),  fmt(ts.iavg,    4), betterMetric('i', fw.iavg, ts.iavg, true)],
+      ['Avg Power (W)',      fmt(fw.pavg,    4),  fmt(ts.pavg,    4), betterMetric('p', fw.pavg, ts.pavg, true)],
+      ['Ripple (V)',         fmt(fw.vripple),     fmt(ts.vripple),    betterMetric('r', fw.vripple, ts.vripple, false)],
+      ['Stabilization (s)', fmtStab(fw),          fmtStab(ts),        betterMetric('s', fw.stabilization_time, ts.stabilization_time, false)],
     ];
 
     const tbody = $('conclusionTable').querySelector('tbody');
@@ -488,8 +419,8 @@
       `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td class="winner">${r[3]}</td></tr>`
     ).join('');
 
-    const pWin = fw.pavg >= ts.pavg ? 'Full-Wave Bridge Rectifier' : '2-Stage Cockcroft-Walton';
-    const rippleWin = fw.vripple <= ts.vripple ? 'Full-Wave Bridge' : '2-Stage CWVM';
+    const pWin      = fw.pavg     >= ts.pavg     ? 'Full-Wave Bridge Rectifier' : '2-Stage Cockcroft-Walton';
+    const rippleWin = fw.vripple  <= ts.vripple  ? 'Full-Wave Bridge'           : '2-Stage CWVM';
     $('conclusionText').innerHTML = `
       <h3>Analysis</h3>
       <p>Under identical 10 s vibration excitation (Relay 7), <strong>${pWin}</strong> delivered higher average output power
@@ -504,54 +435,41 @@
     const opening = body.classList.contains('collapsed');
     if (opening) buildConclusionTable();
     body.classList.toggle('collapsed', !opening);
-    if (opening) {
-      setTimeout(() => body.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
-    }
+    if (opening) setTimeout(() => body.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
   }
 
   async function emergencyStop() {
     await sendCommand('RESET_SYSTEM');
     const patch = {
-      stage: 'idle',
-      active_circuit: 'none',
-      is_measuring: false,
-      led_fw: false,
-      led_2s: false,
-      lcd_message: 'Ready',
-      relay_mask: 0,
-      active_relays: [],
+      stage: 'idle', active_circuit: 'none', is_measuring: false,
+      led_fw: false, led_2s: false, lcd_message: 'Ready', relay_mask: 0, active_relays: [],
     };
     await sb.from('system_state').update(patch).eq('id', 1);
     await fetchSystemState();
   }
 
+  // ─── Polling & realtime ───────────────────────────────────────
   function startStatePolling() {
-    setInterval(() => {
-      fetchSystemState();
-    }, STATE_POLL_MS);
-    setInterval(() => {
-      if (systemState.last_seen) {
-        updateStatusBar({ ...systemState });
-      }
-    }, 1000);
+    setInterval(fetchSystemState, STATE_POLL_MS);
+    setInterval(() => { if (systemState.last_seen) updateStatusBar({ ...systemState }); }, 1000);
   }
 
   function setupRealtime() {
     sb.channel('state')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'system_state' }, (payload) => {
-      updateStatusBar(payload.new);
-    })
-    .subscribe();
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'system_state' }, (p) => {
+        updateStatusBar(p.new);
+      })
+      .subscribe();
 
     sb.channel('summary')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'measurement_summary' }, (payload) => {
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'measurement_summary' }, (p) => {
         if (acqProfileMode) return;
-      const row = payload.new;
+        const row = p.new;
         if (row.circuit_key === CIRCUIT.FW || row.circuit_key === CIRCUIT.TS) {
           loadLatestSummary(row.circuit_key);
         }
-    })
-    .subscribe();
+      })
+      .subscribe();
   }
 
   function setupScrollReveal() {
@@ -561,43 +479,41 @@
     document.querySelectorAll('.reveal').forEach((el) => obs.observe(el));
   }
 
+  // ─── Init ─────────────────────────────────────────────────────
   async function init() {
     if (!initSupabase()) return;
+
     acqProfileMode = !!cfg().USE_ACQ_PROFILES;
     if (acqProfileMode) {
-      try {
-        await loadAcqLib();
-      } catch (e) {
-        console.error(e);
-        acqProfileMode = false;
-      }
+      try { await loadAcqLib(); }
+      catch (e) { console.error('[ACQ] lib load failed:', e); acqProfileMode = false; }
     }
 
     initCharts();
     setupScrollReveal();
 
     const { data } = await sb.from('system_state').select('*').eq('id', 1).maybeSingle();
-    if (data) {
-      lastKnownStage = data.stage || 'idle';
-      updateStatusBar(data);
-    }
+    if (data) { lastKnownStage = data.stage || 'idle'; updateStatusBar(data); }
 
     if (!acqProfileMode) {
       await Promise.all([loadLatestSummary(CIRCUIT.FW), loadLatestSummary(CIRCUIT.TS)]);
     }
+
     setupRealtime();
     startStatePolling();
 
-    $('btnMeasureFw').addEventListener('click', async () => {
+    $('btnMeasureFw').addEventListener('click', () => {
       clearCircuitDisplay(CIRCUIT.FW);
       sendCommand('MEASURE_FW_CIRCUIT');
-      if (acqProfileMode) await armLocalAcquisition(CIRCUIT.FW);
+      if (acqProfileMode) runLocalAcquisition(CIRCUIT.FW);
     });
-    $('btnMeasure2s').addEventListener('click', async () => {
+
+    $('btnMeasure2s').addEventListener('click', () => {
       clearCircuitDisplay(CIRCUIT.TS);
       sendCommand('MEASURE_2S_CIRCUIT');
-      if (acqProfileMode) await armLocalAcquisition(CIRCUIT.TS);
+      if (acqProfileMode) runLocalAcquisition(CIRCUIT.TS);
     });
+
     $('btnConclusion').addEventListener('click', toggleConclusion);
     $('btnEmergencyStop').addEventListener('click', () => {
       if (confirm('Emergency STOP — turn off all relays and vibration?')) emergencyStop();
