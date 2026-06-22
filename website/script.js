@@ -77,7 +77,7 @@
   async function startLocalAcquisition(circuitKey) {
     const acq = await loadAcqLib();
     const run = acq.generateRun(circuitKey);
-    const interval = acq.INTERVAL_MS || 1000;
+    const waitMs = (acq.SAMPLE_COUNT || 10) * (acq.INTERVAL_MS || 1000);
 
     localAcqActive = true;
     localAcqCircuit = circuitKey;
@@ -86,14 +86,9 @@
     renderCircuit(circuitKey);
     updateMeasureButtons();
 
-    for (let t = 0; t < run.samples.length; t++) {
-      samples[circuitKey].push(run.samples[t]);
-      renderCircuit(circuitKey);
-      if (t < run.samples.length - 1) {
-        await delay(interval);
-      }
-    }
+    await delay(waitMs);
 
+    samples[circuitKey] = run.samples.slice();
     summaries[circuitKey] = run.summary;
     renderCircuit(circuitKey);
     updateConclusionButton();
