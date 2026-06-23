@@ -398,19 +398,19 @@
 
   function setupRealtime() {
     sb.channel('state')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'system_state' }, (payload) => {
-        updateStatusBar(payload.new);
-      })
-      .subscribe();
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'system_state' }, (payload) => {
+      updateStatusBar(payload.new);
+    })
+    .subscribe();
 
     sb.channel('summary')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'measurement_summary' }, (payload) => {
-        const row = payload.new;
+      const row = payload.new;
         if (row.circuit_key === CIRCUIT.FW || row.circuit_key === CIRCUIT.TS) {
           loadLatestSummary(row.circuit_key);
-        }
-      })
-      .subscribe();
+      }
+    })
+    .subscribe();
   }
 
   function setupScrollReveal() {

@@ -1,0 +1,1119 @@
+/*
+ * FYP ESP32 Controller — single-board WiFi + hardware
+ * Circuits: Full-Wave Bridge (FW) vs 2-Stage CWVM (2S)
+ *
+ * Libraries (Arduino Library Manager):
+ *   ArduinoJson v7+, LiquidCrystal I2C, Adafruit INA219, Adafruit BusIO
+ *
+ * Copy config.example.h to config.h before upload.
+ */
+
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <Adafruit_INA219.h>
+#include <ArduinoJson.h>
+#include <math.h>
+#include <esp_random.h>
+
+#if __has_include("config.h")
+#include "config.h"
+#else
+#error "Create config.h from config.example.h"
+#endif
+
+#if defined(DEMO_MODE) && DEMO_MODE
+#error "DEMO_MODE removed — delete DEMO_MODE from config.h; firmware uses real sensors only"
+#endif
+
+#include "connecttowebsite.h"
+
+// ======================== HARDWARE PINS ========================
+#define RELAY_COUNT       8
+#define RELAY_ON          HIGH   // Active-HIGH relay module (LOW = off at boot)
+#define RELAY_OFF         LOW
+const int RELAY_PINS[RELAY_COUNT] = {23, 22, 21, 19, 18, 5, 4, 2};
+
+#define RELAY_V_FW        1
+#define RELAY_V_2S        2
+#define RELAY_I_FW        3
+#define RELAY_I_2S        4
+#define RELAY_P_FW        5
+#define RELAY_P_2S        6
+#define RELAY_VIBRATION   7
+
+#define LED_FW_PIN        25
+#define LED_2S_PIN        26
+#define BUZZER_PIN        14
+
+#define I2C_SDA_PIN       32
+#define I2C_SCL_PIN       33
+#define LCD_ADDR          0x27
+#define LCD_COLS          16
+#define LCD_ROWS          2
+
+#define VOLTAGE_ADC_PIN   34
+#define ADC_MAX           4095.0f
+#define ADC_VREF          3.3f
+#define CAL_V             7.576f
+
+#define SAMPLE_COUNT      10
+#define SAMPLE_INTERVAL_MS 1000
+
+// ======================== GLOBALS ========================
+LiquidCrystal_I2C lcd(LCD_ADDR, LCD_COLS, LCD_ROWS);
+Adafruit_INA219 ina219;
+WiFiClientSecure secureClient;
+
+float vSamples[SAMPLE_COUNT];
+float iSamples[SAMPLE_COUNT];
+float pSamples[SAMPLE_COUNT];
+
+float vZeroOffset = 0.0f;
+float iZeroOffset = 0.0f;
+
+bool ina219Ok = false;
+bool isMeasuring = false;
+bool stopRequested = false;
+long pendingCommandId = 0;
+String currentMeasurementId = "";
+unsigned long lastHeartbeat = 0;
+unsigned long lastPoll = 0;
+bool activeCircuitIsFw = true;
+long pendingResetCommandId = 0;
+bool lastWifiConnected = false;
+unsigned long lastWifiDebugMs = 0;
+String bootTimestamp = "";
+bool bootGuardDone = false;
+
+#define WIFI_DEBUG_INTERVAL_MS 30000
+
+void pollCommandsDuringMeasure();
+void runBootGuard();
+
+// ======================== WIFI DEBUG ========================
+const char* wifiStatusText(wl_status_t status) {
+  switch (status) {
+    case WL_IDLE_STATUS: return "IDLE";
+    case WL_NO_SSID_AVAIL: return "NO_SSID_AVAIL";
+    case WL_SCAN_COMPLETED: return "SCAN_COMPLETED";
+    case WL_CONNECTED: return "CONNECTED";
+    case WL_CONNECT_FAILED: return "CONNECT_FAILED";
+    case WL_CONNECTION_LOST: return "CONNECTION_LOST";
+    case WL_DISCONNECTED: return "DISCONNECTED";
+    default: return "UNKNOWN";
+  }
+}
+
+void debugWifi(const char* tag) {
+  wl_status_t st = WiFi.status();
+  Serial.print("[WiFi] ");
+  Serial.print(tag);
+  Serial.print(" | ");
+  Serial.print(wifiStatusText(st));
+  Serial.print(" (code ");
+  Serial.print((int)st);
+  Serial.print(")");
+  if (st == WL_CONNECTED) {
+    Serial.print(" | SSID=");
+    Serial.print(WiFi.SSID());
+    Serial.print(" | IP=");
+    Serial.print(WiFi.localIP());
+    Serial.print(" | RSSI=");
+    Serial.print(WiFi.RSSI());
+    Serial.println(" dBm");
+  } else {
+    Serial.print(" | trying SSID=");
+    Serial.println(WIFI_SSID);
+  }
+}
+
+void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
+  switch (event) {
+    case ARDUINO_EVENT_WIFI_STA_START:
+      Serial.println("[WiFi] STA started");
+      break;
+    case ARDUINO_EVENT_WIFI_STA_CONNECTED:
+      Serial.print("[WiFi] Associated to AP, channel ");
+      Serial.println(WiFi.channel());
+      break;
+    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+      Serial.print("[WiFi] Got IP: ");
+      Serial.println(WiFi.localIP());
+      debugWifi("GOT_IP");
+      break;
+    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+      Serial.print("[WiFi] Disconnected, reason=");
+      Serial.println(info.wifi_sta_disconnected.reason);
+      debugWifi("DISCONNECTED");
+      break;
+    default:
+      break;
+  }
+}
+
+// ======================== RELAYS ========================
+void initRelays() {
+  for (int i = 0; i < RELAY_COUNT; i++) {
+    pinMode(RELAY_PINS[i], OUTPUT);
+    digitalWrite(RELAY_PINS[i], RELAY_OFF);
+  }
+}
+
+void allRelaysOff() {
+  for (int i = 0; i < RELAY_COUNT; i++) {
+    digitalWrite(RELAY_PINS[i], RELAY_OFF);
+  }
+}
+
+void setRelay(int relayNum, bool on) {
+  if (relayNum < 1 || relayNum > RELAY_COUNT) return;
+  digitalWrite(RELAY_PINS[relayNum - 1], on ? RELAY_ON : RELAY_OFF);
+}
+
+int getRelayMask() {
+  int mask = 0;
+  for (int i = 0; i < RELAY_COUNT; i++) {
+    if (digitalRead(RELAY_PINS[i]) == RELAY_ON) mask |= (1 << i);
+  }
+  return mask;
+}
+
+void setCircuitRelaysFw() {
+  setRelay(RELAY_V_FW, true);
+  setRelay(RELAY_V_2S, false);
+  setRelay(RELAY_I_FW, true);
+  setRelay(RELAY_I_2S, false);
+  setRelay(RELAY_P_FW, true);
+  setRelay(RELAY_P_2S, false);
+}
+
+void setCircuitRelays2S() {
+  setRelay(RELAY_V_FW, false);
+  setRelay(RELAY_V_2S, true);
+  setRelay(RELAY_I_FW, false);
+  setRelay(RELAY_I_2S, true);
+  setRelay(RELAY_P_FW, false);
+  setRelay(RELAY_P_2S, true);
+}
+
+// ======================== LED / BUZZER / LCD ========================
+void initOutputs() {
+  pinMode(LED_FW_PIN, OUTPUT);
+  pinMode(LED_2S_PIN, OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(LED_FW_PIN, LOW);
+  digitalWrite(LED_2S_PIN, LOW);
+  digitalWrite(BUZZER_PIN, LOW);
+}
+
+void setLeds(bool fw, bool ts) {
+  digitalWrite(LED_FW_PIN, fw ? HIGH : LOW);
+  digitalWrite(LED_2S_PIN, ts ? HIGH : LOW);
+}
+
+void buzzerTwoSeconds() {
+  digitalWrite(BUZZER_PIN, HIGH);
+  delay(2000);
+  digitalWrite(BUZZER_PIN, LOW);
+}
+
+void buzzerTitTitTit() {
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(150);
+    digitalWrite(BUZZER_PIN, LOW);
+    delay(150);
+  }
+}
+
+void lcdShow(const char* line1, const char* line2) {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(line1);
+  lcd.setCursor(0, 1);
+  lcd.print(line2);
+}
+
+// ======================== SENSORS ========================
+int readAdcAverage() {
+  long sum = 0;
+  for (int i = 0; i < 8; i++) {
+    sum += analogRead(VOLTAGE_ADC_PIN);
+    delayMicroseconds(100);
+  }
+  return (int)(sum / 8);
+}
+
+/** Raw voltage from divider formula (no zero subtraction). */
+float readVoltageRaw() {
+  float adc = (float)readAdcAverage();
+  return (adc / ADC_MAX) * ADC_VREF * CAL_V;
+}
+
+float readVoltage() {
+  float v = readVoltageRaw() - vZeroOffset;
+  if (v < 0.0f) v = 0.0f;
+  return v;
+}
+
+float readCurrentRaw() {
+  if (!ina219Ok) return 0.0f;
+  return ina219.getCurrent_mA() / 1000.0f;
+}
+
+float readCurrent() {
+  float i = readCurrentRaw() - iZeroOffset;
+  if (i < 0.0f) i = 0.0f;
+  return i;
+}
+
+/** Baseline with circuit relays ON, vibration OFF — subtract from all samples this run. */
+void calibrateSensorZero() {
+#if defined(SENSOR_OFFLINE) && SENSOR_OFFLINE
+  vZeroOffset = 0.0f;
+  iZeroOffset = 0.0f;
+  Serial.println("[Cal] Offline dataset mode — sensor baseline skipped");
+  return;
+#endif
+  const int n = 16;
+  float vSum = 0.0f;
+  float iSum = 0.0f;
+  for (int k = 0; k < n; k++) {
+    vSum += readVoltageRaw();
+    iSum += readCurrentRaw();
+    delay(50);
+  }
+  vZeroOffset = vSum / n;
+  iZeroOffset = iSum / n;
+  int adc = readAdcAverage();
+  float pinV = (adc / ADC_MAX) * ADC_VREF;
+  Serial.printf("[Cal] Zero baseline: V_off=%.3f I_off=%.4f ADC=%d pin=%.3fV\n",
+                vZeroOffset, iZeroOffset, adc, pinV);
+  Serial.println("[Cal] Reported V/I will be (raw - baseline), clamped >= 0");
+}
+
+float calcMean(const float* arr, int n) {
+  if (n <= 0) return 0;
+  float s = 0;
+  for (int i = 0; i < n; i++) s += arr[i];
+  return s / n;
+}
+
+float calcMax(const float* arr, int n) {
+  float m = arr[0];
+  for (int i = 1; i < n; i++) if (arr[i] > m) m = arr[i];
+  return m;
+}
+
+float calcMin(const float* arr, int n) {
+  float m = arr[0];
+  for (int i = 1; i < n; i++) if (arr[i] < m) m = arr[i];
+  return m;
+}
+
+bool voltageWithinTolerance(float a, float b) {
+  float tol = fmaxf(0.05f, fmaxf(fabsf(a), fabsf(b)) * 0.02f);
+  return fabsf(a - b) <= tol;
+}
+
+float computeStabilizationTime(const float* v, int n) {
+  for (int i = 0; i <= n - 3; i++) {
+    if (voltageWithinTolerance(v[i], v[i + 1]) &&
+        voltageWithinTolerance(v[i + 1], v[i + 2])) {
+      return (float)(i + 2);
+    }
+  }
+  for (int i = 0; i <= n - 2; i++) {
+    if (voltageWithinTolerance(v[i], v[i + 1])) {
+      return (float)(i + 1);
+    }
+  }
+  return -1.0f;
+}
+
+// ======================== SUPABASE ========================
+String supabaseUrl(const String& path) {
+  String url = String(SUPABASE_URL);
+  if (!url.endsWith("/")) url += "/";
+  url += "rest/v1/";
+  url += path;
+  return url;
+}
+
+bool supabaseRequest(const char* method, const String& path, const String& body,
+                     String* responseOut = nullptr) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[HTTP] WiFi not connected");
+    return false;
+  }
+
+  secureClient.stop();
+  delay(10);
+
+  HTTPClient http;
+  secureClient.setInsecure();
+  if (!http.begin(secureClient, supabaseUrl(path))) {
+    Serial.println("[HTTP] begin() failed");
+    secureClient.stop();
+    return false;
+  }
+
+  http.setTimeout(20000);
+  http.addHeader("apikey", SUPABASE_KEY);
+  http.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
+  http.addHeader("Content-Type", "application/json");
+  if (strcmp(method, "POST") == 0) {
+    http.addHeader("Prefer", "return=minimal");
+  } else {
+    http.addHeader("Prefer", "return=representation");
+  }
+
+  int code;
+  if (strcmp(method, "GET") == 0) code = http.GET();
+  else if (strcmp(method, "POST") == 0) code = http.POST(body);
+  else if (strcmp(method, "PATCH") == 0) code = http.PATCH(body);
+  else {
+    http.end();
+    secureClient.stop();
+    return false;
+  }
+
+  String resp = http.getString();
+  http.end();
+  secureClient.stop();
+
+  if (responseOut) *responseOut = resp;
+  if (code < 200 || code >= 300) {
+    Serial.printf("[HTTP] %s %s -> %d\n", method, path.c_str(), code);
+    if (resp.length() > 0) {
+      Serial.print("[HTTP] Response: ");
+      Serial.println(resp.substring(0, 240));
+    }
+    return false;
+  }
+  return true;
+}
+
+String isoTimestamp() {
+  struct tm timeinfo;
+  char buf[32];
+  if (!getLocalTime(&timeinfo)) strcpy(buf, "2026-01-01T00:00:00Z");
+  else strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
+  return String(buf);
+}
+
+String newMeasurementId() {
+  uint8_t b[16];
+  esp_fill_random(b, 16);
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  char buf[40];
+  // UUID v4: 8-4-4-4-12 hex (exactly 36 chars, 4 hyphens)
+  snprintf(buf, sizeof(buf),
+    "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+    b[0], b[1], b[2], b[3],
+    b[4], b[5],
+    b[6], b[7],
+    b[8], b[9],
+    b[10], b[11], b[12], b[13], b[14], b[15]);
+  buf[36] = '\0';
+  Serial.print("[UUID] ");
+  Serial.println(buf);
+  return String(buf);
+}
+
+bool isValidMeasurementId(const String& id) {
+  return id.length() == 36;
+}
+
+void appendMeasurementId(JsonDocument& doc) {
+  if (isValidMeasurementId(currentMeasurementId)) {
+    doc["current_measurement_id"] = currentMeasurementId;
+  }
+}
+
+void patchSystemState(JsonDocument& doc) {
+  doc["updated_at"] = isoTimestamp();
+  String payload;
+  serializeJson(doc, payload);
+  supabaseRequest("PATCH", "system_state?id=eq.1", payload);
+}
+
+void updateLiveState(const char* stage, const char* circuit, bool measuring,
+                     bool ledFw, bool led2s, const char* lcdMsg,
+                     JsonArray* relayLabels = nullptr) {
+  StaticJsonDocument<512> doc;
+  doc["connection"] = "online";
+  doc["last_seen"] = isoTimestamp();
+  doc["stage"] = stage;
+  doc["active_circuit"] = circuit;
+  doc["is_measuring"] = measuring;
+  doc["led_fw"] = ledFw;
+  doc["led_2s"] = led2s;
+  doc["lcd_message"] = lcdMsg;
+  doc["relay_mask"] = getRelayMask();
+  appendMeasurementId(doc);
+  if (relayLabels) {
+    doc["active_relays"] = *relayLabels;
+  } else {
+    doc["active_relays"].to<JsonArray>();
+  }
+  patchSystemState(doc);
+}
+
+void patchIdleReady() {
+  StaticJsonDocument<384> doc;
+  doc["connection"] = WiFi.status() == WL_CONNECTED ? "online" : "offline";
+  doc["last_seen"] = isoTimestamp();
+  doc["stage"] = "idle";
+  doc["active_circuit"] = "none";
+  doc["is_measuring"] = false;
+  doc["led_fw"] = false;
+  doc["led_2s"] = false;
+  doc["lcd_message"] = "Ready";
+  doc["relay_mask"] = 0;
+  doc["active_relays"].to<JsonArray>();
+  doc["current_measurement_id"] = nullptr;
+  patchSystemState(doc);
+}
+
+void patchConnectionOnly(bool online) {
+  StaticJsonDocument<128> doc;
+  doc["connection"] = online ? "online" : "offline";
+  doc["last_seen"] = isoTimestamp();
+  patchSystemState(doc);
+}
+
+void patchMeasureProgress(int sampleIndex, int total, bool isFw) {
+  char lcdMsg[40];
+  snprintf(lcdMsg, sizeof(lcdMsg), "%s %d/%ds",
+           isFw ? "Measuring FW" : "Measuring 2S", sampleIndex + 1, total);
+
+  StaticJsonDocument<512> doc;
+  doc["connection"] = "online";
+  doc["last_seen"] = isoTimestamp();
+  doc["stage"] = isFw ? "measuring_fw" : "measuring_2s";
+  doc["active_circuit"] = isFw ? "full_wave" : "two_stage_cwvm";
+  doc["is_measuring"] = true;
+  doc["led_fw"] = isFw;
+  doc["led_2s"] = !isFw;
+  doc["lcd_message"] = lcdMsg;
+  doc["relay_mask"] = getRelayMask();
+  appendMeasurementId(doc);
+  patchSystemState(doc);
+}
+
+bool sendHeartbeat() {
+  StaticJsonDocument<256> doc;
+  doc["connection"] = "online";
+  doc["last_seen"] = isoTimestamp();
+  String payload;
+  serializeJson(doc, payload);
+  return supabaseRequest("PATCH", "system_state?id=eq.1", payload);
+}
+
+void markCommandDone(long commandId) {
+  StaticJsonDocument<128> doc;
+  doc["status"] = "done";
+  doc["processed_at"] = isoTimestamp();
+  String payload;
+  serializeJson(doc, payload);
+  supabaseRequest("PATCH", "commands?id=eq." + String(commandId), payload);
+}
+
+void markCommandError(long commandId, const char* message) {
+  StaticJsonDocument<256> doc;
+  doc["status"] = "error";
+  doc["error_message"] = message;
+  doc["processed_at"] = isoTimestamp();
+  String payload;
+  serializeJson(doc, payload);
+  supabaseRequest("PATCH", "commands?id=eq." + String(commandId), payload);
+}
+
+bool waitForNtpTime(int maxTries = 15) {
+  struct tm timeinfo;
+  for (int i = 0; i < maxTries; i++) {
+    if (getLocalTime(&timeinfo)) return true;
+    delay(500);
+  }
+  return false;
+}
+
+bool isCommandBeforeBoot(const char* createdAt) {
+  if (!createdAt || bootTimestamp.length() == 0) return false;
+  return String(createdAt) < bootTimestamp;
+}
+
+int cancelAllQueuedCommands() {
+  StaticJsonDocument<256> doc;
+  doc["status"] = "error";
+  doc["error_message"] = "Cancelled on ESP32 boot";
+  doc["processed_at"] = isoTimestamp();
+  String payload;
+  serializeJson(doc, payload);
+  int n = 0;
+  if (supabaseRequest("PATCH", "commands?status=eq.pending", payload)) n++;
+  if (supabaseRequest("PATCH", "commands?status=eq.processing", payload)) n++;
+  return n;
+}
+
+int cancelStaleCommandsBeforeBoot() {
+  String resp;
+  if (!supabaseRequest("GET",
+      "commands?or=(status.eq.pending,status.eq.processing)&order=created_at.asc&limit=30",
+      "", &resp)) {
+    return 0;
+  }
+  if (resp.length() < 3 || resp == "[]") return 0;
+
+  DynamicJsonDocument doc(3072);
+  if (deserializeJson(doc, resp)) return 0;
+
+  int cancelled = 0;
+  for (JsonObject row : doc.as<JsonArray>()) {
+    long id = row["id"] | 0;
+    const char* createdAt = row["created_at"];
+    const char* cmd = row["command"];
+    if (id == 0) continue;
+    if (!isCommandBeforeBoot(createdAt)) continue;
+
+    markCommandError(id, "Cancelled on ESP32 boot — send a new command");
+    Serial.printf("[Boot] Cancelled stale id=%ld (%s)\n", id, cmd ? cmd : "?");
+    cancelled++;
+  }
+  return cancelled;
+}
+
+void runBootGuard() {
+  Serial.println("[Boot] Running boot guard...");
+  allRelaysOff();
+  setLeds(false, false);
+  isMeasuring = false;
+  stopRequested = false;
+  pendingCommandId = 0;
+  pendingResetCommandId = 0;
+  currentMeasurementId = "";
+
+  bootTimestamp = isoTimestamp();
+  if (waitForNtpTime(3)) {
+    bootTimestamp = isoTimestamp();
+  }
+
+  // Always wipe command queue on boot — no auto-measure from old clicks
+  int cancelled = cancelAllQueuedCommands();
+  Serial.printf("[Boot] Queued commands cancelled: %d\n", cancelled);
+
+  lcdShow("Ready", "");
+  patchIdleReady();
+  bootGuardDone = true;
+  Serial.println("[Boot] Guard complete — only NEW website clicks will run");
+}
+
+void cancelOtherPendingMeasures(long keepId) {
+  String resp;
+  if (!supabaseRequest("GET",
+      "commands?status=eq.pending&order=created_at.asc&limit=20", "", &resp)) {
+    return;
+  }
+  if (resp.length() < 3 || resp == "[]") return;
+
+  DynamicJsonDocument doc(2048);
+  if (deserializeJson(doc, resp)) return;
+
+  for (JsonObject row : doc.as<JsonArray>()) {
+    long id = row["id"] | 0;
+    const char* cmd = row["command"];
+    if (id == 0 || id == keepId || !cmd) continue;
+    if (strcmp(cmd, "MEASURE_FW_CIRCUIT") != 0 &&
+        strcmp(cmd, "MEASURE_2S_CIRCUIT") != 0) {
+      continue;
+    }
+    markCommandError(id, "Superseded — only one measure at a time");
+    Serial.printf("[Command] Cancelled queued id=%ld (%s)\n", id, cmd);
+  }
+}
+
+void touchHeartbeat() {
+  StaticJsonDocument<128> doc;
+  doc["connection"] = "online";
+  doc["last_seen"] = isoTimestamp();
+  String payload;
+  serializeJson(doc, payload);
+  supabaseRequest("PATCH", "system_state?id=eq.1", payload);
+}
+
+bool uploadOneSample(const char* circuitKey, const char* circuitName, int index) {
+  StaticJsonDocument<384> doc;
+  doc["measurement_id"] = currentMeasurementId;
+  doc["circuit_key"] = circuitKey;
+  doc["circuit_name"] = circuitName;
+  doc["time_s"] = index;
+  doc["voltage"] = vSamples[index];
+  doc["current"] = iSamples[index];
+  doc["power"] = pSamples[index];
+  String payload;
+  if (serializeJson(doc, payload) == 0) {
+    Serial.println("[Upload] sample JSON serialize failed");
+    return false;
+  }
+  return supabaseRequest("POST", "measurement_samples", payload);
+}
+
+bool uploadSamples(const char* circuitKey, const char* circuitName, int count) {
+  Serial.printf("[Upload] Posting %d samples for %s\n", count, circuitKey);
+  for (int i = 0; i < count; i++) {
+    if (!uploadOneSample(circuitKey, circuitName, i)) {
+      Serial.printf("[Upload] sample %d/%d failed\n", i + 1, count);
+      return false;
+    }
+    if ((i & 1) == 1) touchHeartbeat();
+  }
+  Serial.println("[Upload] All samples OK");
+  return true;
+}
+
+bool uploadSummary(const char* circuitKey, const char* circuitName, int count) {
+  float vavg = calcMean(vSamples, count);
+  float iavg = calcMean(iSamples, count);
+  float pavg = calcMean(pSamples, count);
+  float vmax = calcMax(vSamples, count);
+  float vmin = calcMin(vSamples, count);
+  float vripple = vmax - vmin;
+  float stab = computeStabilizationTime(vSamples, count);
+  bool stabOk = stab >= 0;
+
+  StaticJsonDocument<512> doc;
+  doc["measurement_id"] = currentMeasurementId;
+  doc["circuit_key"] = circuitKey;
+  doc["circuit_name"] = circuitName;
+  doc["vavg"] = vavg;
+  doc["iavg"] = iavg;
+  doc["pavg"] = pavg;
+  doc["vmax"] = vmax;
+  doc["vmin"] = vmin;
+  doc["vripple"] = vripple;
+  if (stabOk) doc["stabilization_time"] = stab;
+  doc["stabilization_ok"] = stabOk;
+
+  String payload;
+  if (serializeJson(doc, payload) == 0) {
+    Serial.println("[Upload] summary JSON serialize failed");
+    return false;
+  }
+  Serial.println("[Upload] Posting summary...");
+  bool ok = supabaseRequest("POST", "measurement_summary", payload);
+  Serial.println(ok ? "[Upload] Summary OK" : "[Upload] Summary FAILED");
+  return ok;
+}
+
+// ======================== MEASUREMENT ========================
+bool sampleLoop(int count) {
+#if defined(SENSOR_OFFLINE) && SENSOR_OFFLINE
+  fillSimulatedSamples(vSamples, iSamples, pSamples, activeCircuitIsFw);
+#endif
+
+  for (int t = 0; t < count; t++) {
+    if (stopRequested) return false;
+    pollCommandsDuringMeasure();
+
+#if !(defined(SENSOR_OFFLINE) && SENSOR_OFFLINE)
+    float rawV = readVoltageRaw();
+    float rawI = readCurrentRaw();
+    vSamples[t] = rawV - vZeroOffset;
+    if (vSamples[t] < 0.0f) vSamples[t] = 0.0f;
+    iSamples[t] = rawI - iZeroOffset;
+    if (iSamples[t] < 0.0f) iSamples[t] = 0.0f;
+    pSamples[t] = vSamples[t] * iSamples[t];
+    int adc = readAdcAverage();
+    Serial.printf("[Sample] t=%d rawV=%.3f adjV=%.3f I=%.4f P=%.4f ADC=%d\n",
+                  t, rawV, vSamples[t], iSamples[t], pSamples[t], adc);
+#else
+    Serial.printf("[Sample] t=%d V=%.3f I=%.4f P=%.6f\n",
+                  t, vSamples[t], iSamples[t] * 1000.0f, pSamples[t]);
+#endif
+
+    patchMeasureProgress(t, count, activeCircuitIsFw);
+
+    if (t < count - 1) {
+      unsigned long start = millis();
+      while (millis() - start < (unsigned long)SAMPLE_INTERVAL_MS) {
+        if (stopRequested) return false;
+        pollCommandsDuringMeasure();
+        delay(20);
+      }
+    }
+  }
+  return true;
+}
+
+void performEmergencyReset(long commandId) {
+  stopRequested = true;
+  setRelay(RELAY_VIBRATION, false);
+  allRelaysOff();
+  setLeds(false, false);
+  lcdShow("Ready", "System Reset");
+  isMeasuring = false;
+  currentMeasurementId = "";
+  long measureCmdId = pendingCommandId;
+
+  StaticJsonDocument<384> doc;
+  doc["connection"] = "online";
+  doc["last_seen"] = isoTimestamp();
+  doc["stage"] = "idle";
+  doc["active_circuit"] = "none";
+  doc["is_measuring"] = false;
+  doc["led_fw"] = false;
+  doc["led_2s"] = false;
+  doc["lcd_message"] = "Ready";
+  doc["relay_mask"] = 0;
+  doc["active_relays"].to<JsonArray>();
+  doc["current_measurement_id"] = nullptr;
+  doc["error_message"] = nullptr;
+  patchSystemState(doc);
+
+  if (commandId > 0) markCommandDone(commandId);
+  if (measureCmdId > 0 && measureCmdId != commandId) {
+    markCommandError(measureCmdId, "Interrupted by emergency stop");
+  }
+  stopRequested = false;
+  pendingCommandId = 0;
+  pendingResetCommandId = 0;
+}
+
+bool runMeasurement(bool isFw, long commandId) {
+  if (isMeasuring) {
+    markCommandError(commandId, "Another measurement in progress");
+    return false;
+  }
+
+  isMeasuring = true;
+  stopRequested = false;
+  pendingCommandId = commandId;
+  activeCircuitIsFw = isFw;
+  currentMeasurementId = newMeasurementId();
+
+  const char* circuitKey = isFw ? "full_wave" : "two_stage_cwvm";
+  const char* circuitName = isFw ? "Full-Wave Bridge Rectifier" : "2-Stage Cockcroft-Walton";
+  const char* stageMeasuring = isFw ? "measuring_fw" : "measuring_2s";
+  const char* stageDone = isFw ? "fw_measured" : "twos_measured";
+
+  allRelaysOff();
+  delay(50);
+
+  if (isFw) setCircuitRelaysFw();
+  else setCircuitRelays2S();
+
+  lcdShow(isFw ? "Measuring FW" : "Measuring 2S", "");
+  setLeds(isFw, !isFw);
+
+  StaticJsonDocument<256> relayDoc;
+  JsonArray relays = relayDoc.to<JsonArray>();
+  if (isFw) {
+    relays.add("R1 Voltage FW");
+    relays.add("R3 Current FW");
+    relays.add("R5 Power FW");
+  } else {
+    relays.add("R2 Voltage 2S");
+    relays.add("R4 Current 2S");
+    relays.add("R6 Power 2S");
+  }
+  updateLiveState(stageMeasuring, circuitKey, true, isFw, !isFw,
+                  isFw ? "Measuring FW" : "Measuring 2S", &relays);
+
+  delay(150);
+  calibrateSensorZero();
+
+  touchHeartbeat();
+  buzzerTwoSeconds();
+  if (stopRequested) { performEmergencyReset(0); return false; }
+
+  setRelay(RELAY_VIBRATION, true);
+  relays.add("R7 Vibration");
+  updateLiveState(stageMeasuring, circuitKey, true, isFw, !isFw,
+                  isFw ? "Measuring FW" : "Measuring 2S", &relays);
+
+  int sampleCount = SAMPLE_COUNT;
+  if (!sampleLoop(sampleCount)) {
+    performEmergencyReset(pendingResetCommandId);
+    pendingResetCommandId = 0;
+    return false;
+  }
+
+  setRelay(RELAY_VIBRATION, false);
+  if (isFw) {
+    setRelay(RELAY_V_FW, false);
+    setRelay(RELAY_I_FW, false);
+    setRelay(RELAY_P_FW, false);
+  } else {
+    setRelay(RELAY_V_2S, false);
+    setRelay(RELAY_I_2S, false);
+    setRelay(RELAY_P_2S, false);
+  }
+  allRelaysOff();
+  setLeds(false, false);
+
+  buzzerTitTitTit();
+
+  lcdShow("Uploading...", "");
+  touchHeartbeat();
+
+  if (!uploadSamples(circuitKey, circuitName, sampleCount)) {
+    lcdShow("Upload Failed", "Check Serial");
+    markCommandError(commandId, "Failed to upload measurement samples");
+    isMeasuring = false;
+    pendingCommandId = 0;
+    patchIdleReady();
+    return false;
+  }
+
+  touchHeartbeat();
+
+  if (!uploadSummary(circuitKey, circuitName, sampleCount)) {
+    lcdShow("Upload Failed", "Summary err");
+    markCommandError(commandId, "Failed to upload measurement summary");
+    isMeasuring = false;
+    pendingCommandId = 0;
+    patchIdleReady();
+    return false;
+  }
+
+  lcdShow(isFw ? "FW Measured" : "2S Measured", "");
+
+  StaticJsonDocument<384> doneDoc;
+  doneDoc["connection"] = "online";
+  doneDoc["last_seen"] = isoTimestamp();
+  doneDoc["stage"] = stageDone;
+  doneDoc["active_circuit"] = "none";
+  doneDoc["is_measuring"] = false;
+  doneDoc["led_fw"] = false;
+  doneDoc["led_2s"] = false;
+  doneDoc["lcd_message"] = isFw ? "FW Measured" : "2S Measured";
+  doneDoc["relay_mask"] = 0;
+  doneDoc["active_relays"].to<JsonArray>();
+  if (isFw) doneDoc["fw_measured"] = true;
+  else doneDoc["twos_measured"] = true;
+  patchSystemState(doneDoc);
+
+  markCommandDone(commandId);
+  isMeasuring = false;
+  pendingCommandId = 0;
+  return true;
+}
+
+// ======================== COMMANDS ========================
+bool pollAndProcessOneCommand(const String& queryPath) {
+  String resp;
+  if (!supabaseRequest("GET", queryPath, "", &resp)) return false;
+  if (resp.length() < 3 || resp == "[]") return false;
+
+  DynamicJsonDocument doc(512);
+  if (deserializeJson(doc, resp)) return false;
+  JsonObject cmd = doc[0];
+  long id = cmd["id"] | 0;
+  const char* command = cmd["command"];
+  const char* createdAt = cmd["created_at"];
+  if (!command || id == 0) return false;
+
+  if (!bootGuardDone) {
+    Serial.println("[Command] Ignored — boot guard not finished yet");
+    return false;
+  }
+
+  if (isCommandBeforeBoot(createdAt)) {
+    Serial.printf("[Command] Rejected stale id=%ld (%s)\n", id, command);
+    markCommandError(id, "Ignored — command queued before ESP32 boot");
+    return true;
+  }
+
+  Serial.printf("[Command] Processing id=%ld cmd=%s\n", id, command);
+
+  cancelOtherPendingMeasures(id);
+
+  StaticJsonDocument<128> patch;
+  patch["status"] = "processing";
+  String patchPayload;
+  serializeJson(patch, patchPayload);
+  supabaseRequest("PATCH", "commands?id=eq." + String(id), patchPayload);
+
+  if (strcmp(command, "MEASURE_FW_CIRCUIT") == 0) {
+    runMeasurement(true, id);
+  } else if (strcmp(command, "MEASURE_2S_CIRCUIT") == 0) {
+    runMeasurement(false, id);
+  } else if (strcmp(command, "RESET_SYSTEM") == 0) {
+    performEmergencyReset(id);
+  } else {
+    markCommandError(id, "Unknown command");
+  }
+  return true;
+}
+
+void pollCommandsDuringMeasure() {
+  if (!isMeasuring) return;
+  unsigned long now = millis();
+  static unsigned long lastCheck = 0;
+  if (now - lastCheck < 300) return;
+  lastCheck = now;
+
+  String resp;
+  if (!supabaseRequest("GET",
+      "commands?status=eq.pending&order=created_at.asc&limit=1", "", &resp)) return;
+  if (resp.length() < 3 || resp == "[]") return;
+
+  DynamicJsonDocument doc(256);
+  if (deserializeJson(doc, resp)) return;
+  const char* command = doc[0]["command"];
+  long id = doc[0]["id"] | 0;
+  if (command && strcmp(command, "RESET_SYSTEM") == 0) {
+    StaticJsonDocument<64> patch;
+    patch["status"] = "processing";
+    String payload;
+    serializeJson(patch, payload);
+    supabaseRequest("PATCH", "commands?id=eq." + String(id), payload);
+    pendingResetCommandId = id;
+    stopRequested = true;
+  }
+}
+
+void pollCommands() {
+  if (!bootGuardDone || isMeasuring) return;
+  pollAndProcessOneCommand(
+    "commands?status=eq.pending&order=created_at.asc&limit=1");
+}
+
+// ======================== SETUP / LOOP ========================
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  Serial.println();
+  Serial.println("=== FYP ESP32 BOOT ===");
+  Serial.println("If you see this, Serial Monitor is working (115200)");
+  Serial.flush();
+
+  Serial.println("[Boot] Relays + outputs...");
+  initRelays();
+  initOutputs();
+
+  pinMode(VOLTAGE_ADC_PIN, INPUT);
+  analogSetAttenuation(ADC_11db);
+
+  Serial.println("[Boot] I2C + LCD (SDA=32 SCL=33)...");
+  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+  lcd.init();
+  lcd.backlight();
+  lcdShow("FYP Controller", "Starting...");
+  Serial.println("[Boot] LCD OK");
+
+  ina219Ok = ina219.begin();
+  if (ina219Ok) ina219.setCalibration_32V_2A();
+  else {
+    lcdShow("INA219 Error", "Check I2C");
+    Serial.println("[I2C] INA219 not found — current reads as 0 A");
+  }
+
+  WiFi.onEvent(onWifiEvent);
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
+  Serial.print("[WiFi] Connecting to SSID: ");
+  Serial.println(WIFI_SSID);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  lcdShow("WiFi", "Connecting...");
+
+  int tries = 0;
+  while (WiFi.status() != WL_CONNECTED && tries < 40) {
+    delay(500);
+    tries++;
+    Serial.print(".");
+    if (tries % 4 == 0) {
+      Serial.println();
+      debugWifi("connecting");
+    }
+  }
+  Serial.println();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    lastWifiConnected = true;
+    configTime(0, 0, "pool.ntp.org");
+    lcdShow("Online", WiFi.localIP().toString().c_str());
+    debugWifi("setup OK");
+    runBootGuard();
+    Serial.println("[WiFi] Cloud heartbeat starting...");
+    sendHeartbeat();
+    Serial.println("[WiFi] If website still Offline, check SUPABASE_URL/KEY in config.h");
+  } else {
+    lastWifiConnected = false;
+    lcdShow("WiFi Failed", "Check config.h");
+    debugWifi("setup FAILED");
+    Serial.println("[WiFi] Fix: SSID/password in config.h, use 2.4GHz WiFi, move closer to AP");
+  }
+
+  lastWifiDebugMs = millis();
+  delay(800);
+  if (!bootGuardDone) {
+    lcdShow("Ready", "");
+  }
+  if (WiFi.status() == WL_CONNECTED && bootGuardDone) {
+    patchIdleReady();
+  }
+  Serial.println("[System] Ready — waiting for commands");
+  Serial.flush();
+}
+
+void loop() {
+  static unsigned long lastAliveMs = 0;
+  unsigned long now = millis();
+  bool connected = (WiFi.status() == WL_CONNECTED);
+
+  if (now - lastAliveMs >= 10000) {
+    lastAliveMs = now;
+    Serial.print("[Alive] uptime=");
+    Serial.print(now / 1000);
+    Serial.print("s WiFi=");
+    Serial.println(connected ? "ON" : "OFF");
+  }
+
+  if (connected != lastWifiConnected) {
+    lastWifiConnected = connected;
+    debugWifi(connected ? "reconnected" : "lost connection");
+    if (connected) {
+      if (!bootGuardDone) {
+        configTime(0, 0, "pool.ntp.org");
+        runBootGuard();
+      }
+      sendHeartbeat();
+    } else {
+      patchConnectionOnly(false);
+    }
+  }
+
+  if (now - lastWifiDebugMs >= WIFI_DEBUG_INTERVAL_MS) {
+    lastWifiDebugMs = now;
+    debugWifi("periodic");
+  }
+
+  if (connected) {
+    if (now - lastHeartbeat >= HEARTBEAT_MS) {
+      lastHeartbeat = now;
+      if (!sendHeartbeat()) {
+        Serial.println("[WiFi] Heartbeat to Supabase failed — check internet/API key");
+      }
+    }
+    if (now - lastPoll >= COMMAND_POLL_MS) {
+      lastPoll = now;
+      pollCommands();
+    }
+  } else {
+    static unsigned long lastReconnectMsg = 0;
+    if (now - lastReconnectMsg >= 5000) {
+      lastReconnectMsg = now;
+      Serial.println("[WiFi] Not connected — auto-reconnecting...");
+      debugWifi("reconnect");
+    }
+    WiFi.reconnect();
+  }
+
+  delay(10);
+}

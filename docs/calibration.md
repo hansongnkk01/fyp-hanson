@@ -30,12 +30,12 @@ If `rawV` is ~12 V with no input, the module has DC offset — firmware handles 
 - Common ground with ESP32.
 
 ### Zero-offset calibration
-1. Disconnect piezo input (0 A expected).
-2. Read `getCurrent_mA()` in a test sketch.
-3. If offset is +5 mA, subtract in software: `I = (ina219.getCurrent_mA() - 5.0) / 1000.0`
+Firmware auto-baselines at start of each measure (`[Cal] I_off=...` in Serial).
+For manual trim, note offset when 0 A expected.
 
 ### Shunt / range
-Firmware uses `setCalibration_32V_2A()`. For currents below 1 mA, readings may be noisy — dashboard uses `max(P = V×I, P = V²/R)` with **R = 10 kΩ**.
+Firmware uses `setCalibration_32V_2A()`. For currents below 1 mA, readings may be noisy.
+Power on website: `P = V × I` (adjusted V and I after baseline).
 
 ---
 
@@ -43,7 +43,7 @@ Firmware uses `setCalibration_32V_2A()`. For currents below 1 mA, readings may b
 
 | Check | Expected |
 |-------|----------|
-| No input, relay OFF | V ≈ 0, I ≈ 0 |
+| No input, measure started (motor OFF) | `adjV` ≈ 0, `adjI` ≈ 0 at t=0 |
 | Relay ON, motor running | V > 0, ripple visible on chart |
 | Full-wave vs half-wave | Full-wave usually higher Vavg |
 | Higher CWVM stages | Often higher Vavg but possibly more ripple |
