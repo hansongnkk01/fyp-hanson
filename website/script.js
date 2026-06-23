@@ -431,7 +431,6 @@
       updateStatusBar(data);
     }
 
-    await Promise.all([loadLatestSummary(CIRCUIT.FW), loadLatestSummary(CIRCUIT.TS)]);
     setupRealtime();
     startStatePolling();
 

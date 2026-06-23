@@ -3,7 +3,7 @@
  * Circuits: Full-Wave Bridge (FW) vs 2-Stage CWVM (2S)
  *
  * Libraries (Arduino Library Manager):
- *   ArduinoJson v7+, LiquidCrystal I2C, Adafruit INA219, Adafruit BusIO
+ *   ArduinoJson v7+, Adafruit INA219, Adafruit BusIO
  *
  * Copy config.example.h to config.h before upload.
  */
@@ -12,7 +12,6 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <Wire.h>
-#include <LiquidCrystal_I2C.h>
 #include <Adafruit_INA219.h>
 #include <ArduinoJson.h>
 #include <math.h>
@@ -46,13 +45,8 @@ const int RELAY_PINS[RELAY_COUNT] = {23, 22, 21, 19, 18, 5, 4, 2};
 
 #define LED_FW_PIN        25
 #define LED_2S_PIN        26
-#define BUZZER_PIN        14
-
 #define I2C_SDA_PIN       32
 #define I2C_SCL_PIN       33
-#define LCD_ADDR          0x27
-#define LCD_COLS          16
-#define LCD_ROWS          2
 
 #define VOLTAGE_ADC_PIN   34
 #define ADC_MAX           4095.0f
@@ -63,7 +57,6 @@ const int RELAY_PINS[RELAY_COUNT] = {23, 22, 21, 19, 18, 5, 4, 2};
 #define SAMPLE_INTERVAL_MS 1000
 
 // ======================== GLOBALS ========================
-LiquidCrystal_I2C lcd(LCD_ADDR, LCD_COLS, LCD_ROWS);
 Adafruit_INA219 ina219;
 WiFiClientSecure secureClient;
 
@@ -199,42 +192,17 @@ void setCircuitRelays2S() {
   setRelay(RELAY_P_2S, true);
 }
 
-// ======================== LED / BUZZER / LCD ========================
+// ======================== LED ========================
 void initOutputs() {
   pinMode(LED_FW_PIN, OUTPUT);
   pinMode(LED_2S_PIN, OUTPUT);
-  pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(LED_FW_PIN, LOW);
   digitalWrite(LED_2S_PIN, LOW);
-  digitalWrite(BUZZER_PIN, LOW);
 }
 
 void setLeds(bool fw, bool ts) {
   digitalWrite(LED_FW_PIN, fw ? HIGH : LOW);
   digitalWrite(LED_2S_PIN, ts ? HIGH : LOW);
-}
-
-void buzzerTwoSeconds() {
-  digitalWrite(BUZZER_PIN, HIGH);
-  delay(2000);
-  digitalWrite(BUZZER_PIN, LOW);
-}
-
-void buzzerTitTitTit() {
-  for (int i = 0; i < 3; i++) {
-    digitalWrite(BUZZER_PIN, HIGH);
-    delay(150);
-    digitalWrite(BUZZER_PIN, LOW);
-    delay(150);
-  }
-}
-
-void lcdShow(const char* line1, const char* line2) {
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print(line1);
-  lcd.setCursor(0, 1);
-  lcd.print(line2);
 }
 
 // ======================== SENSORS ========================
@@ -607,7 +575,6 @@ void runBootGuard() {
   int cancelled = cancelAllQueuedCommands();
   Serial.printf("[Boot] Queued commands cancelled: %d\n", cancelled);
 
-  lcdShow("Ready", "");
   patchIdleReady();
   bootGuardDone = true;
   Serial.println("[Boot] Guard complete — only NEW website clicks will run");
@@ -755,7 +722,6 @@ void performEmergencyReset(long commandId) {
   setRelay(RELAY_VIBRATION, false);
   allRelaysOff();
   setLeds(false, false);
-  lcdShow("Ready", "System Reset");
   isMeasuring = false;
   currentMeasurementId = "";
   long measureCmdId = pendingCommandId;
@@ -807,7 +773,6 @@ bool runMeasurement(bool isFw, long commandId) {
   if (isFw) setCircuitRelaysFw();
   else setCircuitRelays2S();
 
-  lcdShow(isFw ? "Measuring FW" : "Measuring 2S", "");
   setLeds(isFw, !isFw);
 
   StaticJsonDocument<256> relayDoc;
@@ -828,7 +793,6 @@ bool runMeasurement(bool isFw, long commandId) {
   calibrateSensorZero();
 
   touchHeartbeat();
-  buzzerTwoSeconds();
   if (stopRequested) { performEmergencyReset(0); return false; }
 
   setRelay(RELAY_VIBRATION, true);
@@ -856,13 +820,9 @@ bool runMeasurement(bool isFw, long commandId) {
   allRelaysOff();
   setLeds(false, false);
 
-  buzzerTitTitTit();
-
-  lcdShow("Uploading...", "");
   touchHeartbeat();
 
   if (!uploadSamples(circuitKey, circuitName, sampleCount)) {
-    lcdShow("Upload Failed", "Check Serial");
     markCommandError(commandId, "Failed to upload measurement samples");
     isMeasuring = false;
     pendingCommandId = 0;
@@ -873,15 +833,12 @@ bool runMeasurement(bool isFw, long commandId) {
   touchHeartbeat();
 
   if (!uploadSummary(circuitKey, circuitName, sampleCount)) {
-    lcdShow("Upload Failed", "Summary err");
     markCommandError(commandId, "Failed to upload measurement summary");
     isMeasuring = false;
     pendingCommandId = 0;
     patchIdleReady();
     return false;
   }
-
-  lcdShow(isFw ? "FW Measured" : "2S Measured", "");
 
   StaticJsonDocument<384> doneDoc;
   doneDoc["connection"] = "online";
@@ -1000,19 +957,12 @@ void setup() {
   pinMode(VOLTAGE_ADC_PIN, INPUT);
   analogSetAttenuation(ADC_11db);
 
-  Serial.println("[Boot] I2C + LCD (SDA=32 SCL=33)...");
+  Serial.println("[Boot] I2C + INA219 (SDA=32 SCL=33)...");
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-  lcd.init();
-  lcd.backlight();
-  lcdShow("FYP Controller", "Starting...");
-  Serial.println("[Boot] LCD OK");
 
   ina219Ok = ina219.begin();
   if (ina219Ok) ina219.setCalibration_32V_2A();
-  else {
-    lcdShow("INA219 Error", "Check I2C");
-    Serial.println("[I2C] INA219 not found — current reads as 0 A");
-  }
+  else Serial.println("[I2C] INA219 not found — current reads as 0 A");
 
   WiFi.onEvent(onWifiEvent);
   WiFi.mode(WIFI_STA);
@@ -1020,7 +970,6 @@ void setup() {
   Serial.print("[WiFi] Connecting to SSID: ");
   Serial.println(WIFI_SSID);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  lcdShow("WiFi", "Connecting...");
 
   int tries = 0;
   while (WiFi.status() != WL_CONNECTED && tries < 40) {
@@ -1037,7 +986,6 @@ void setup() {
   if (WiFi.status() == WL_CONNECTED) {
     lastWifiConnected = true;
     configTime(0, 0, "pool.ntp.org");
-    lcdShow("Online", WiFi.localIP().toString().c_str());
     debugWifi("setup OK");
     runBootGuard();
     Serial.println("[WiFi] Cloud heartbeat starting...");
@@ -1045,16 +993,12 @@ void setup() {
     Serial.println("[WiFi] If website still Offline, check SUPABASE_URL/KEY in config.h");
   } else {
     lastWifiConnected = false;
-    lcdShow("WiFi Failed", "Check config.h");
     debugWifi("setup FAILED");
     Serial.println("[WiFi] Fix: SSID/password in config.h, use 2.4GHz WiFi, move closer to AP");
   }
 
   lastWifiDebugMs = millis();
   delay(800);
-  if (!bootGuardDone) {
-    lcdShow("Ready", "");
-  }
   if (WiFi.status() == WL_CONNECTED && bootGuardDone) {
     patchIdleReady();
   }
