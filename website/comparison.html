@@ -3,297 +3,196 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>FYP — Rectifier Performance Comparison</title>
+  <title>Overall Performance Comparison</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     body {
-      font-family: 'Segoe UI', system-ui, sans-serif;
-      background: #0f1117;
-      color: #e2e8f0;
-      min-height: 100vh;
-      padding: 36px 20px 60px;
-    }
-
-    /* ── Header ── */
-    header { text-align: center; margin-bottom: 32px; }
-    header h1 { font-size: 1.7rem; font-weight: 700; color: #f1f5f9; }
-    header p  { margin-top: 8px; font-size: 0.88rem; color: #64748b; }
-
-    /* ── Legend ── */
-    .legend {
-      display: flex; justify-content: center; gap: 28px;
-      margin-bottom: 36px;
-    }
-    .legend-item { display: flex; align-items: center; gap: 8px; font-size: 0.88rem; font-weight: 600; }
-    .dot { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
-    .dot-fw { background: #3b82f6; }
-    .dot-ts { background: #f97316; }
-
-    /* ── Chart grid ── */
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: 20px;
-      max-width: 1100px;
-      margin: 0 auto 44px;
-    }
-
-    /* ── Card ── */
-    .card {
-      background: #1e2333;
-      border: 1px solid #2d3650;
-      border-radius: 14px;
-      padding: 22px 20px 18px;
-    }
-    .card-title {
-      font-size: 0.78rem; font-weight: 700;
-      text-transform: uppercase; letter-spacing: 0.8px;
-      color: #94a3b8; margin-bottom: 3px;
-    }
-    .card-winner { font-size: 0.78rem; color: #4ade80; margin-bottom: 20px; }
-    .card-winner b { font-weight: 700; }
-
-    /* ── Bar chart ── */
-    .bar-chart {
+      font-family: Arial, 'Segoe UI', sans-serif;
+      background: #e8e8e8;
       display: flex;
-      align-items: flex-end;
       justify-content: center;
-      gap: 30px;
-      height: 180px;
-      padding-bottom: 28px; /* space for labels */
-      position: relative;
+      align-items: flex-start;
+      min-height: 100vh;
+      padding: 40px 16px;
     }
-
-    /* horizontal guide lines */
-    .bar-chart::before {
-      content: '';
-      position: absolute;
-      inset: 0 0 28px 0;
-      background-image:
-        linear-gradient(to bottom, transparent calc(25% - 1px), rgba(255,255,255,0.06) calc(25% - 1px), rgba(255,255,255,0.06) 25%),
-        linear-gradient(to bottom, transparent calc(50% - 1px), rgba(255,255,255,0.06) calc(50% - 1px), rgba(255,255,255,0.06) 50%),
-        linear-gradient(to bottom, transparent calc(75% - 1px), rgba(255,255,255,0.06) calc(75% - 1px), rgba(255,255,255,0.06) 75%);
-      pointer-events: none;
+    .card {
+      background: #ffffff;
+      border: 1px solid #c8c8c8;
+      padding: 28px 32px 24px;
+      box-shadow: 0 3px 14px rgba(0,0,0,0.13);
+      width: 860px;
+      max-width: 100%;
     }
-
-    .bar-group {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 6px;
-      position: relative;
-      z-index: 1;
-    }
-
-    .bar-value {
-      font-size: 0.82rem;
-      font-weight: 700;
-      color: #f1f5f9;
-      white-space: nowrap;
-    }
-
-    .bar {
-      width: 64px;
-      border-radius: 6px 6px 0 0;
-      transition: opacity 0.2s;
-      position: relative;
-    }
-    .bar:hover { opacity: 0.85; }
-
-    .bar-fw { background: linear-gradient(180deg, #60a5fa 0%, #3b82f6 100%); }
-    .bar-ts { background: linear-gradient(180deg, #fb923c 0%, #f97316 100%); }
-
-    .bar-label {
-      position: absolute;
-      bottom: -24px;
-      left: 50%;
-      transform: translateX(-50%);
-      font-size: 0.74rem;
-      color: #64748b;
-      white-space: nowrap;
-    }
-
-    /* ── Summary table ── */
-    .summary-wrap { max-width: 680px; margin: 0 auto; }
-    .summary-title { font-size: 1rem; font-weight: 700; color: #f1f5f9; margin-bottom: 14px; text-align: center; }
-
-    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
-    thead tr { background: #2d3650; }
-    th { padding: 10px 14px; text-align: left; font-weight: 600; color: #94a3b8; letter-spacing: 0.3px; }
-    td { padding: 10px 14px; border-bottom: 1px solid #2d3650; color: #cbd5e1; }
-    tbody tr:hover { background: #252c40; }
-    td.win { color: #4ade80; font-weight: 700; }
-    td.diff { color: #60a5fa; font-size: 0.82rem; }
-
-    .note { text-align: center; font-size: 0.76rem; color: #475569; margin-top: 14px; line-height: 1.6; }
+    canvas { display: block; width: 100%; height: auto; }
   </style>
 </head>
 <body>
-
-<header>
-  <h1>Rectifier Performance Comparison</h1>
-  <p>3S4P PZT disc array &nbsp;·&nbsp; Vibration motor excitation &nbsp;·&nbsp; ~4.72 kΩ load &nbsp;·&nbsp; 10 samples @ 1 s/sample</p>
-</header>
-
-<div class="legend">
-  <div class="legend-item"><div class="dot dot-fw"></div> Full-Wave Bridge Rectifier (FW)</div>
-  <div class="legend-item"><div class="dot dot-ts"></div> 2-Stage Cockcroft-Walton VM (2S)</div>
+<div class="card">
+  <canvas id="chart" width="796" height="460"></canvas>
 </div>
 
-<div class="grid">
+<script>
+window.addEventListener('load', function () {
+  const canvas = document.getElementById('chart');
+  const ctx    = canvas.getContext('2d');
+  const W = canvas.width;
+  const H = canvas.height;
 
-  <!-- Voltage -->
-  <div class="card">
-    <div class="card-title">Average Output Voltage</div>
-    <div class="card-winner">Winner: <b>Full-Wave Bridge (+24.7 %)</b></div>
-    <!--
-      FW = 2.42 V, 2S = 1.94 V
-      scale: max = 3.0 V → bar height as % of 180 px
-      FW = (2.42/3.0)*100 = 80.7%  → 145 px
-      2S = (1.94/3.0)*100 = 64.7%  → 116 px
-    -->
-    <div class="bar-chart">
-      <div class="bar-group">
-        <span class="bar-value">2.42 V</span>
-        <div class="bar bar-fw" style="height:145px;">
-          <span class="bar-label">FW</span>
-        </div>
-      </div>
-      <div class="bar-group">
-        <span class="bar-value">1.94 V</span>
-        <div class="bar bar-ts" style="height:116px;">
-          <span class="bar-label">2S</span>
-        </div>
-      </div>
-    </div>
-  </div>
+  // ── Palette ────────────────────────────────────────────────────────────────
+  const C_FW       = '#4472C4';
+  const C_FW_DARK  = '#2f55a0';
+  const C_TS       = '#ED7D31';
+  const C_TS_DARK  = '#c46115';
+  const C_GRID     = '#d8d8d8';
+  const C_AXIS     = '#555';
+  const C_TEXT     = '#222';
 
-  <!-- Current -->
-  <div class="card">
-    <div class="card-title">Average Output Current</div>
-    <div class="card-winner">Winner: <b>Full-Wave Bridge (+19.5 %)</b></div>
-    <!--
-      FW = 0.49 mA, 2S = 0.41 mA
-      scale: max = 0.65 mA
-      FW = (0.49/0.65)*100 = 75.4% → 135 px
-      2S = (0.41/0.65)*100 = 63.1% → 113 px
-    -->
-    <div class="bar-chart">
-      <div class="bar-group">
-        <span class="bar-value">0.49 mA</span>
-        <div class="bar bar-fw" style="height:135px;">
-          <span class="bar-label">FW</span>
-        </div>
-      </div>
-      <div class="bar-group">
-        <span class="bar-value">0.41 mA</span>
-        <div class="bar bar-ts" style="height:113px;">
-          <span class="bar-label">2S</span>
-        </div>
-      </div>
-    </div>
-  </div>
+  // ── Chart layout ───────────────────────────────────────────────────────────
+  const ml = 72, mt = 72, mr = 28, mb = 110;
+  const cX = ml, cY = mt;
+  const cW = W - ml - mr;
+  const cH = H - mt - mb;
+  const yBot = cY + cH;
 
-  <!-- Power -->
-  <div class="card">
-    <div class="card-title">Average Output Power</div>
-    <div class="card-winner">Winner: <b>Full-Wave Bridge (+42.9 %)</b></div>
-    <!--
-      FW = 1.23 mW, 2S = 0.86 mW
-      scale: max = 1.6 mW
-      FW = (1.23/1.6)*100 = 76.9% → 138 px
-      2S = (0.86/1.6)*100 = 53.8% → 97 px
-    -->
-    <div class="bar-chart">
-      <div class="bar-group">
-        <span class="bar-value">1.23 mW</span>
-        <div class="bar bar-fw" style="height:138px;">
-          <span class="bar-label">FW</span>
-        </div>
-      </div>
-      <div class="bar-group">
-        <span class="bar-value">0.86 mW</span>
-        <div class="bar bar-ts" style="height:97px;">
-          <span class="bar-label">2S</span>
-        </div>
-      </div>
-    </div>
-  </div>
+  // ── Data ───────────────────────────────────────────────────────────────────
+  // Per-group scale: each group scaled so taller bar = 90% of cH.
+  // Actual values are labelled on bars; Y-axis ticks show the shared 0-100% reference.
+  const groups = [
+    { lbl1: 'Average Voltage', lbl2: 'Vavg (V)',      fw: 2.42, ts: 1.94 },
+    { lbl1: 'Average Current', lbl2: 'Iavg (mA)',     fw: 0.49, ts: 0.41 },
+    { lbl1: 'Average Power',   lbl2: 'Pavg (mW)',     fw: 1.23, ts: 0.86 },
+    { lbl1: 'Stabilization',   lbl2: 'Time Ts (s)',   fw: 3,    ts: 4    }
+  ];
 
-  <!-- Stabilization -->
-  <div class="card">
-    <div class="card-title">Stabilization Time &nbsp;<span style="color:#475569;font-weight:400">(lower = better)</span></div>
-    <div class="card-winner">Winner: <b>Full-Wave Bridge (1 s faster)</b></div>
-    <!--
-      FW = 3 s, 2S = 4 s
-      scale: max = 5 s
-      FW = (3/5)*100 = 60% → 108 px
-      2S = (4/5)*100 = 80% → 144 px
-      (shorter bar = better here)
-    -->
-    <div class="bar-chart">
-      <div class="bar-group">
-        <span class="bar-value">3 s</span>
-        <div class="bar bar-fw" style="height:108px;">
-          <span class="bar-label">FW</span>
-        </div>
-      </div>
-      <div class="bar-group">
-        <span class="bar-value">4 s</span>
-        <div class="bar bar-ts" style="height:144px;">
-          <span class="bar-label">2S</span>
-        </div>
-      </div>
-    </div>
-  </div>
+  const TARGET_H = cH * 0.88;           // tallest bar in each group
 
-</div>
+  // ── Title ──────────────────────────────────────────────────────────────────
+  ctx.fillStyle = C_TEXT;
+  ctx.font = 'bold 15px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('Overall Performance Comparison', W / 2, 22);
+  ctx.font = '12px Arial';
+  ctx.fillStyle = '#444';
+  ctx.fillText('Full-Wave Bridge Rectifier vs 2-Stage CWVM Rectifier', W / 2, 42);
 
-<!-- Summary Table -->
-<div class="summary-wrap">
-  <div class="summary-title">Overall Summary</div>
-  <table>
-    <thead>
-      <tr>
-        <th>Metric</th>
-        <th>Full-Wave Bridge (FW)</th>
-        <th>2-Stage CWVM (2S)</th>
-        <th>Difference</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td>Avg Voltage</td>
-        <td class="win">2.42 V</td>
-        <td>1.94 V</td>
-        <td class="diff">FW +24.7 %</td>
-      </tr>
-      <tr>
-        <td>Avg Current</td>
-        <td class="win">0.49 mA</td>
-        <td>0.41 mA</td>
-        <td class="diff">FW +19.5 %</td>
-      </tr>
-      <tr>
-        <td>Avg Power</td>
-        <td class="win">1.23 mW</td>
-        <td>0.86 mW</td>
-        <td class="diff">FW +42.9 %</td>
-      </tr>
-      <tr>
-        <td>Stabilization Time</td>
-        <td class="win">3 s</td>
-        <td>4 s</td>
-        <td class="diff">FW 1 s faster</td>
-      </tr>
-    </tbody>
-  </table>
-  <p class="note">
-    * 2S CWVM voltage multiplication is offset by high piezo source impedance and additional diode drops under load.<br>
-    * Both circuits use the same effective load (~4.72 kΩ). Values averaged over 10 s measurement window.
-  </p>
-</div>
+  // ── Y-axis label ───────────────────────────────────────────────────────────
+  ctx.save();
+  ctx.translate(15, cY + cH / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = 'center';
+  ctx.font = '11px Arial';
+  ctx.fillStyle = '#555';
+  ctx.fillText('Measured Value', 0, 0);
+  ctx.restore();
 
+  // ── Grid lines (5 lines at 20 % intervals) ─────────────────────────────────
+  for (let p = 0; p <= 4; p++) {
+    const y = yBot - (p / 4) * cH;
+    ctx.beginPath();
+    ctx.strokeStyle = C_GRID;
+    ctx.lineWidth = 1;
+    ctx.moveTo(cX, y);
+    ctx.lineTo(cX + cW, y);
+    ctx.stroke();
+
+    ctx.fillStyle = '#777';
+    ctx.font = '10px Arial';
+    ctx.textAlign = 'right';
+    ctx.fillText((p * 25) + '%', cX - 6, y + 4);
+  }
+
+  // ── Axes ───────────────────────────────────────────────────────────────────
+  ctx.beginPath();
+  ctx.strokeStyle = C_AXIS;
+  ctx.lineWidth = 1.5;
+  ctx.moveTo(cX, cY);
+  ctx.lineTo(cX, yBot);
+  ctx.moveTo(cX, yBot);
+  ctx.lineTo(cX + cW, yBot);
+  ctx.stroke();
+
+  // ── Bars ───────────────────────────────────────────────────────────────────
+  const gW    = cW / groups.length;
+  const barW  = 52;
+  const gap   = 10;
+
+  groups.forEach(function (g, i) {
+    const gcx  = cX + gW * i + gW / 2;
+    const fwX  = gcx - gap / 2 - barW;
+    const tsX  = gcx + gap / 2;
+    const mx   = Math.max(g.fw, g.ts);
+    const scale = TARGET_H / mx;
+
+    // ── FW bar ────────────────────────────────────────────────────────────
+    const fwH = g.fw * scale;
+    const fwY = yBot - fwH;
+    const fwGrad = ctx.createLinearGradient(0, fwY, 0, yBot);
+    fwGrad.addColorStop(0, '#6b93d6');
+    fwGrad.addColorStop(1, C_FW);
+    ctx.fillStyle = fwGrad;
+    ctx.fillRect(fwX, fwY, barW, fwH);
+    ctx.strokeStyle = C_FW_DARK;
+    ctx.lineWidth = 0.8;
+    ctx.strokeRect(fwX, fwY, barW, fwH);
+
+    // FW value label
+    ctx.fillStyle = C_TEXT;
+    ctx.font = 'bold 11.5px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(String(g.fw), fwX + barW / 2, fwY - 6);
+
+    // ── 2S bar ────────────────────────────────────────────────────────────
+    const tsH = g.ts * scale;
+    const tsY = yBot - tsH;
+    const tsGrad = ctx.createLinearGradient(0, tsY, 0, yBot);
+    tsGrad.addColorStop(0, '#f4a266');
+    tsGrad.addColorStop(1, C_TS);
+    ctx.fillStyle = tsGrad;
+    ctx.fillRect(tsX, tsY, barW, tsH);
+    ctx.strokeStyle = C_TS_DARK;
+    ctx.lineWidth = 0.8;
+    ctx.strokeRect(tsX, tsY, barW, tsH);
+
+    // 2S value label
+    ctx.fillStyle = C_TEXT;
+    ctx.font = 'bold 11.5px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(String(g.ts), tsX + barW / 2, tsY - 6);
+
+    // ── X-axis group labels ───────────────────────────────────────────────
+    ctx.fillStyle = '#333';
+    ctx.font = '11px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(g.lbl1, gcx, yBot + 17);
+    ctx.font = 'bold 11px Arial';
+    ctx.fillText(g.lbl2, gcx, yBot + 32);
+  });
+
+  // ── Legend ─────────────────────────────────────────────────────────────────
+  const items = [
+    { label: 'Full-Wave Bridge Rectifier', color: C_FW },
+    { label: '2-Stage CWVM Rectifier',     color: C_TS }
+  ];
+
+  const legendBlockW = 16;
+  const legendBlockH = 14;
+  const legendSpacing = 200;
+  const legendStartX  = W / 2 - legendSpacing / 2 - 80;
+  const legendY = H - 46;
+
+  items.forEach(function (item, i) {
+    const x = legendStartX + i * legendSpacing;
+    ctx.fillStyle = item.color;
+    ctx.fillRect(x, legendY, legendBlockW, legendBlockH);
+    ctx.strokeStyle = '#aaa';
+    ctx.lineWidth = 0.6;
+    ctx.strokeRect(x, legendY, legendBlockW, legendBlockH);
+    ctx.fillStyle = '#222';
+    ctx.font = '12px Arial';
+    ctx.textAlign = 'left';
+    ctx.fillText(item.label, x + legendBlockW + 7, legendY + 11);
+  });
+});
+</script>
 </body>
 </html>
