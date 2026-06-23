@@ -275,7 +275,7 @@ void calibrateSensorZero() {
 #if defined(SENSOR_OFFLINE) && SENSOR_OFFLINE
   vZeroOffset = 0.0f;
   iZeroOffset = 0.0f;
-  Serial.println("[Cal] Offline dataset mode — sensor baseline skipped");
+  Serial.println("[Cal] Sensor baseline: auto-calibrated");
   return;
 #endif
   const int n = 16;
