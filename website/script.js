@@ -98,21 +98,23 @@
 
   function initCharts() {
     charts.fwV = makeChart('chartFwV', 'Voltage (V)', '#3b82f6');
-    charts.fwI = makeChart('chartFwI', 'Current (A)', '#22d3ee');
-    charts.fwP = makeChart('chartFwP', 'Power (W)', '#a78bfa');
+    charts.fwI = makeChart('chartFwI', 'Current (mA)', '#22d3ee');
+    charts.fwP = makeChart('chartFwP', 'Power (mW)', '#a78bfa');
     charts.tsV = makeChart('chart2sV', 'Voltage (V)', '#f97316');
-    charts.tsI = makeChart('chart2sI', 'Current (A)', '#fbbf24');
-    charts.tsP = makeChart('chart2sP', 'Power (W)', '#fb7185');
+    charts.tsI = makeChart('chart2sI', 'Current (mA)', '#fbbf24');
+    charts.tsP = makeChart('chart2sP', 'Power (mW)', '#fb7185');
   }
 
   function updateChart(chart, rows, field) {
     const sorted = [...rows].sort((a, b) => a.time_s - b.time_s);
+    // current stored in A → display mA; power stored in W → display mW
+    const scale = (field === 'current' || field === 'power') ? 1000 : 1;
     chart.data.labels = sorted.map((r) => r.time_s);
-    chart.data.datasets[0].data = sorted.map((r) => r[field]);
+    chart.data.datasets[0].data = sorted.map((r) => (r[field] || 0) * scale);
     const vals = chart.data.datasets[0].data;
     const maxVal = vals.length ? Math.max(...vals, 0) : 0;
     chart.options.scales.y.suggestedMin = 0;
-    chart.options.scales.y.suggestedMax = maxVal < 0.01 ? 0.1 : undefined;
+    chart.options.scales.y.suggestedMax = maxVal < 0.5 ? 1 : undefined;
     chart.update();
   }
 
@@ -127,8 +129,8 @@
     const panel = $(panelId);
     const map = {
       vavg: summary ? fmt(summary.vavg) + ' V' : '—',
-      iavg: summary ? fmt(summary.iavg, 4) + ' A' : '—',
-      pavg: summary ? fmt(summary.pavg, 4) + ' W' : '—',
+      iavg: summary ? fmt(summary.iavg * 1000, 3) + ' mA' : '—',
+      pavg: summary ? fmt(summary.pavg * 1000, 3) + ' mW' : '—',
       stab: summary ? fmtStab(summary) : '—',
     };
     panel.querySelectorAll('[data-m]').forEach((el) => {
@@ -338,8 +340,8 @@
 
     const rows = [
       ['Avg Voltage (V)', fmt(fw.vavg), fmt(ts.vavg), betterMetric('v', fw.vavg, ts.vavg, true)],
-      ['Avg Current (A)', fmt(fw.iavg, 4), fmt(ts.iavg, 4), betterMetric('i', fw.iavg, ts.iavg, true)],
-      ['Avg Power (W)', fmt(fw.pavg, 4), fmt(ts.pavg, 4), betterMetric('p', fw.pavg, ts.pavg, true)],
+      ['Avg Current (mA)', fmt(fw.iavg * 1000, 3), fmt(ts.iavg * 1000, 3), betterMetric('i', fw.iavg, ts.iavg, true)],
+      ['Avg Power (mW)', fmt(fw.pavg * 1000, 3), fmt(ts.pavg * 1000, 3), betterMetric('p', fw.pavg, ts.pavg, true)],
       ['Stabilization (s)', fmtStab(fw), fmtStab(ts), betterMetric('s', fw.stabilization_time, ts.stabilization_time, false)],
     ];
 
@@ -352,7 +354,7 @@
     $('conclusionText').innerHTML = `
       <h3>Analysis</h3>
       <p>Under identical 10 s vibration excitation (Relay 7), <strong>${pWin}</strong> delivered higher average output power
-      (${fmt(fw.pavg, 4)} W vs ${fmt(ts.pavg, 4)} W).</p>
+      (${fmt(fw.pavg * 1000, 3)} mW vs ${fmt(ts.pavg * 1000, 3)} mW).</p>
       <p>Stabilization time reflects when consecutive voltage samples first plateau (±0.05 V or ±2%):
       FW ${fmtStab(fw)}, 2S ${fmtStab(ts)}. Use these metrics together — not power alone — when selecting a rectifier for piezo harvesting.</p>`;
   }
