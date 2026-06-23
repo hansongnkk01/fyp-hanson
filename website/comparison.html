@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FYP — Rectifier Performance Comparison</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 32px 16px 48px;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+    header h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      color: #f1f5f9;
+    }
+    header p {
+      margin-top: 8px;
+      font-size: 0.92rem;
+      color: #94a3b8;
+    }
+
+    /* legend strip */
+    .legend {
+      display: flex;
+      justify-content: center;
+      gap: 28px;
+      margin-bottom: 36px;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.88rem;
+      font-weight: 600;
+    }
+    .legend-dot {
+      width: 14px; height: 14px;
+      border-radius: 3px;
+    }
+
+    /* grid */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 24px;
+      max-width: 1100px;
+      margin: 0 auto 48px;
+    }
+
+    .card {
+      background: #1e2333;
+      border: 1px solid #2d3650;
+      border-radius: 14px;
+      padding: 24px 20px 20px;
+    }
+    .card-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: #94a3b8;
+      margin-bottom: 4px;
+    }
+    .card-winner {
+      font-size: 0.78rem;
+      color: #4ade80;
+      margin-bottom: 16px;
+    }
+    .card-winner span { font-weight: 700; }
+    .chart-wrap {
+      position: relative;
+      height: 220px;
+    }
+
+    /* summary table */
+    .summary-wrap {
+      max-width: 700px;
+      margin: 0 auto;
+    }
+    .summary-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: #f1f5f9;
+      margin-bottom: 16px;
+      text-align: center;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+    }
+    thead tr { background: #2d3650; }
+    th {
+      padding: 10px 14px;
+      text-align: left;
+      font-weight: 600;
+      color: #94a3b8;
+      letter-spacing: 0.4px;
+    }
+    td {
+      padding: 10px 14px;
+      border-bottom: 1px solid #2d3650;
+      color: #cbd5e1;
+    }
+    tbody tr:hover { background: #252c40; }
+    td.win {
+      color: #4ade80;
+      font-weight: 700;
+    }
+    td.diff {
+      color: #60a5fa;
+      font-size: 0.82rem;
+    }
+    .note {
+      text-align: center;
+      font-size: 0.78rem;
+      color: #64748b;
+      margin-top: 16px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Rectifier Performance Comparison</h1>
+  <p>3S4P PZT disc array · Vibration motor excitation · ~4.72 kΩ effective load · 10 samples @ 1 s/sample</p>
+</header>
+
+<div class="legend">
+  <div class="legend-item">
+    <div class="legend-dot" style="background:#3b82f6;"></div>
+    Full-Wave Bridge Rectifier (FW)
+  </div>
+  <div class="legend-item">
+    <div class="legend-dot" style="background:#f97316;"></div>
+    2-Stage Cockcroft-Walton VM (2S)
+  </div>
+</div>
+
+<div class="grid">
+
+  <!-- Average Voltage -->
+  <div class="card">
+    <div class="card-title">Average Output Voltage</div>
+    <div class="card-winner">Winner: <span>Full-Wave Bridge (+24.7 %)</span></div>
+    <div class="chart-wrap">
+      <canvas id="chartV"></canvas>
+    </div>
+  </div>
+
+  <!-- Average Current -->
+  <div class="card">
+    <div class="card-title">Average Output Current</div>
+    <div class="card-winner">Winner: <span>Full-Wave Bridge (+19.5 %)</span></div>
+    <div class="chart-wrap">
+      <canvas id="chartI"></canvas>
+    </div>
+  </div>
+
+  <!-- Average Power -->
+  <div class="card">
+    <div class="card-title">Average Output Power</div>
+    <div class="card-winner">Winner: <span>Full-Wave Bridge (+42.9 %)</span></div>
+    <div class="chart-wrap">
+      <canvas id="chartP"></canvas>
+    </div>
+  </div>
+
+  <!-- Stabilization Time -->
+  <div class="card">
+    <div class="card-title">Stabilization Time (lower = better)</div>
+    <div class="card-winner">Winner: <span>Full-Wave Bridge (1 s faster)</span></div>
+    <div class="chart-wrap">
+      <canvas id="chartS"></canvas>
+    </div>
+  </div>
+
+</div>
+
+<!-- Summary table -->
+<div class="summary-wrap">
+  <div class="summary-title">Overall Summary</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Metric</th>
+        <th>Full-Wave Bridge (FW)</th>
+        <th>2-Stage CWVM (2S)</th>
+        <th>Difference</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Avg Voltage</td>
+        <td class="win">2.42 V</td>
+        <td>1.94 V</td>
+        <td class="diff">FW +24.7 %</td>
+      </tr>
+      <tr>
+        <td>Avg Current</td>
+        <td class="win">0.49 mA</td>
+        <td>0.41 mA</td>
+        <td class="diff">FW +19.5 %</td>
+      </tr>
+      <tr>
+        <td>Avg Power</td>
+        <td class="win">1.23 mW</td>
+        <td>0.86 mW</td>
+        <td class="diff">FW +42.9 %</td>
+      </tr>
+      <tr>
+        <td>Stabilization Time</td>
+        <td class="win">3 s</td>
+        <td>4 s</td>
+        <td class="diff">FW 1 s faster</td>
+      </tr>
+    </tbody>
+  </table>
+  <p class="note">
+    * 2S CWVM voltage multiplication is offset by high piezo source impedance and additional diode drops under load.<br>
+    * Both circuits use the same effective load (~4.72 kΩ). Values are averaged over 10 s measurement window.
+  </p>
+</div>
+
+<script>
+  const FW_COLOR      = 'rgba(59,  130, 246, 0.85)';
+  const FW_BORDER     = 'rgba(59,  130, 246, 1)';
+  const TS_COLOR      = 'rgba(249, 115, 22,  0.85)';
+  const TS_BORDER     = 'rgba(249, 115, 22,  1)';
+
+  const GRID_COLOR    = 'rgba(255,255,255,0.07)';
+  const TICK_COLOR    = '#64748b';
+
+  const baseOpts = (yLabel, yMax) => ({
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        callbacks: {
+          label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y} ${yLabel}`
+        }
+      }
+    },
+    scales: {
+      x: {
+        grid: { display: false },
+        ticks: { color: TICK_COLOR, font: { size: 11 } }
+      },
+      y: {
+        max: yMax,
+        grid: { color: GRID_COLOR },
+        ticks: { color: TICK_COLOR, font: { size: 11 } },
+        title: { display: true, text: yLabel, color: TICK_COLOR, font: { size: 11 } }
+      }
+    }
+  });
+
+  const labels = ['Full-Wave Bridge', '2-Stage CWVM'];
+
+  /* Voltage */
+  new Chart(document.getElementById('chartV'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Avg Voltage',
+        data: [2.42, 1.94],
+        backgroundColor: [FW_COLOR, TS_COLOR],
+        borderColor:     [FW_BORDER, TS_BORDER],
+        borderWidth: 2,
+        borderRadius: 6,
+        barThickness: 60
+      }]
+    },
+    options: baseOpts('V', 3.0)
+  });
+
+  /* Current */
+  new Chart(document.getElementById('chartI'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Avg Current',
+        data: [0.49, 0.41],
+        backgroundColor: [FW_COLOR, TS_COLOR],
+        borderColor:     [FW_BORDER, TS_BORDER],
+        borderWidth: 2,
+        borderRadius: 6,
+        barThickness: 60
+      }]
+    },
+    options: baseOpts('mA', 0.65)
+  });
+
+  /* Power */
+  new Chart(document.getElementById('chartP'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Avg Power',
+        data: [1.23, 0.86],
+        backgroundColor: [FW_COLOR, TS_COLOR],
+        borderColor:     [FW_BORDER, TS_BORDER],
+        borderWidth: 2,
+        borderRadius: 6,
+        barThickness: 60
+      }]
+    },
+    options: baseOpts('mW', 1.6)
+  });
+
+  /* Stabilization */
+  new Chart(document.getElementById('chartS'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Stabilization Time',
+        data: [3, 4],
+        backgroundColor: [FW_COLOR, TS_COLOR],
+        borderColor:     [FW_BORDER, TS_BORDER],
+        borderWidth: 2,
+        borderRadius: 6,
+        barThickness: 60
+      }]
+    },
+    options: {
+      ...baseOpts('s', 5),
+      plugins: {
+        ...baseOpts('s', 5).plugins,
+        annotation: {}
+      }
+    }
+  });
+</script>
+
+</body>
+</html>
