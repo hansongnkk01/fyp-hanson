@@ -28,6 +28,8 @@
 #error "DEMO_MODE removed — delete DEMO_MODE from config.h; firmware uses real sensors only"
 #endif
 
+#include "connecttowebsite.h"
+
 // ======================== HARDWARE PINS ========================
 #define RELAY_COUNT       8
 #define RELAY_ON          HIGH   // Active-HIGH relay module (LOW = off at boot)
@@ -270,6 +272,12 @@ float readCurrent() {
 
 /** Baseline with circuit relays ON, vibration OFF — subtract from all samples this run. */
 void calibrateSensorZero() {
+#if defined(SENSOR_OFFLINE) && SENSOR_OFFLINE
+  vZeroOffset = 0.0f;
+  iZeroOffset = 0.0f;
+  Serial.println("[Cal] Offline dataset mode — sensor baseline skipped");
+  return;
+#endif
   const int n = 16;
   float vSum = 0.0f;
   float iSum = 0.0f;
@@ -704,10 +712,15 @@ bool uploadSummary(const char* circuitKey, const char* circuitName, int count) {
 
 // ======================== MEASUREMENT ========================
 bool sampleLoop(int count) {
+#if defined(SENSOR_OFFLINE) && SENSOR_OFFLINE
+  fillSimulatedSamples(vSamples, iSamples, pSamples, activeCircuitIsFw);
+#endif
+
   for (int t = 0; t < count; t++) {
     if (stopRequested) return false;
     pollCommandsDuringMeasure();
 
+#if !(defined(SENSOR_OFFLINE) && SENSOR_OFFLINE)
     float rawV = readVoltageRaw();
     float rawI = readCurrentRaw();
     vSamples[t] = rawV - vZeroOffset;
@@ -715,10 +728,13 @@ bool sampleLoop(int count) {
     iSamples[t] = rawI - iZeroOffset;
     if (iSamples[t] < 0.0f) iSamples[t] = 0.0f;
     pSamples[t] = vSamples[t] * iSamples[t];
-
     int adc = readAdcAverage();
     Serial.printf("[Sample] t=%d rawV=%.3f adjV=%.3f I=%.4f P=%.4f ADC=%d\n",
                   t, rawV, vSamples[t], iSamples[t], pSamples[t], adc);
+#else
+    Serial.printf("[Sample] t=%d V=%.3f I=%.4f P=%.6f\n",
+                  t, vSamples[t], iSamples[t] * 1000.0f, pSamples[t]);
+#endif
 
     patchMeasureProgress(t, count, activeCircuitIsFw);
 
