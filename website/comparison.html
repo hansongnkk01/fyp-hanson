@@ -64,7 +64,9 @@ window.addEventListener('load', function () {
     { lbl1: 'Stabilization',   lbl2: 'Time Ts (s)',   fw: 3,    ts: 4    }
   ];
 
-  const TARGET_H = cH * 0.88;           // tallest bar in each group
+  // Unified Y scale: 0–5, all groups use same px/unit
+  const Y_MAX = 5;
+  const pxPerUnit = cH / Y_MAX;
 
   // ── Title ──────────────────────────────────────────────────────────────────
   ctx.fillStyle = C_TEXT;
@@ -85,9 +87,9 @@ window.addEventListener('load', function () {
   ctx.fillText('Measured Value', 0, 0);
   ctx.restore();
 
-  // ── Grid lines (5 lines at 20 % intervals) ─────────────────────────────────
-  for (let p = 0; p <= 4; p++) {
-    const y = yBot - (p / 4) * cH;
+  // ── Grid lines at 0, 1, 2, 3, 4, 5 ──────────────────────────────────────────
+  for (let v = 0; v <= Y_MAX; v++) {
+    const y = yBot - v * pxPerUnit;
     ctx.beginPath();
     ctx.strokeStyle = C_GRID;
     ctx.lineWidth = 1;
@@ -98,7 +100,7 @@ window.addEventListener('load', function () {
     ctx.fillStyle = '#777';
     ctx.font = '10px Arial';
     ctx.textAlign = 'right';
-    ctx.fillText((p * 25) + '%', cX - 6, y + 4);
+    ctx.fillText(v.toFixed(2), cX - 6, y + 4);
   }
 
   // ── Axes ───────────────────────────────────────────────────────────────────
@@ -120,11 +122,9 @@ window.addEventListener('load', function () {
     const gcx  = cX + gW * i + gW / 2;
     const fwX  = gcx - gap / 2 - barW;
     const tsX  = gcx + gap / 2;
-    const mx   = Math.max(g.fw, g.ts);
-    const scale = TARGET_H / mx;
 
     // ── FW bar ────────────────────────────────────────────────────────────
-    const fwH = g.fw * scale;
+    const fwH = g.fw * pxPerUnit;
     const fwY = yBot - fwH;
     const fwGrad = ctx.createLinearGradient(0, fwY, 0, yBot);
     fwGrad.addColorStop(0, '#6b93d6');
@@ -142,7 +142,7 @@ window.addEventListener('load', function () {
     ctx.fillText(String(g.fw), fwX + barW / 2, fwY - 6);
 
     // ── 2S bar ────────────────────────────────────────────────────────────
-    const tsH = g.ts * scale;
+    const tsH = g.ts * pxPerUnit;
     const tsY = yBot - tsH;
     const tsGrad = ctx.createLinearGradient(0, tsY, 0, yBot);
     tsGrad.addColorStop(0, '#f4a266');
