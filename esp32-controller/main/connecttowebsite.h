@@ -3,12 +3,13 @@
  * Offline sensor dataset — pre-calibrated reference values for hardware-disconnected mode.
  * Provides fillSimulatedSamples() used by sampleLoop() when SENSOR_OFFLINE is active.
  *
- * Dataset basis: 3S4P 20 mm PZT discs, vibration motor excitation, 10 kΩ load.
+ * Dataset basis: 3S4P 20 mm PZT discs, vibration motor excitation, ~4.72 kΩ effective load.
  *   FW  — Full-Wave Bridge Rectifier  (Schottky, 470 µF cap)
  *   2S  — 2-Stage Cockcroft-Walton VM (8× 1N4148, 4× 100 µF cap)
  *
- * Each run applies a small random ±variation so back-to-back tests differ slightly
- * while keeping the same curve shape (cap-charge rise → FW stable / 2S decay).
+ * Both circuits share the same effective load resistance (~4720 Ω), so I = V / 4720 for
+ * every sample — Ohm's-law consistent. FW stabilises at higher V/I/P than 2S.
+ * Each run applies a small random ±2 % jitter so repeated tests differ slightly.
  */
 
 #pragma once
@@ -26,14 +27,14 @@ static const float _CTW_TS_V[10] = {
   0.28f, 2.23f, 2.18f, 2.14f, 2.12f, 2.11f, 2.10f, 2.09f, 2.08f, 2.07f
 };
 
-// Current (A) — getCurrent_mA()/1000 units; e.g. 0.54 mA = 0.000540 A
+// Current (A) — I = V / 4720 Ω for each sample (Ohm's law, ~4.72 kΩ effective load)
 static const float _CTW_FW_I[10] = {
-  0.000160f, 0.000520f, 0.000550f, 0.000530f, 0.000540f,
-  0.000560f, 0.000530f, 0.000550f, 0.000540f, 0.000520f
+  0.000080f, 0.000525f, 0.000536f, 0.000542f, 0.000538f,
+  0.000544f, 0.000540f, 0.000536f, 0.000542f, 0.000538f
 };
-static const float _CTW_TS_I[10] = {
-  0.000120f, 0.000480f, 0.000310f, 0.000190f, 0.000110f,
-  0.000080f, 0.000050f, 0.000040f, 0.000020f, 0.000010f
+static const float _CTW_TS_I[10] = {  // V / 4720: 0.28→0.059, 2.23→0.472 … 2.07→0.439 mA
+  0.000059f, 0.000472f, 0.000462f, 0.000453f, 0.000449f,
+  0.000447f, 0.000445f, 0.000443f, 0.000441f, 0.000439f
 };
 
 // ── Per-sample variation range (±) — keeps curve shape, adds sensor noise ────
@@ -47,9 +48,9 @@ static const float _CTW_FW_IR[10] = {
   0.000020f, 0.000020f, 0.000020f, 0.000020f, 0.000020f,
   0.000020f, 0.000020f, 0.000020f, 0.000020f, 0.000020f
 };
-static const float _CTW_TS_IR[10] = {
-  0.000020f, 0.000040f, 0.000030f, 0.000020f, 0.000020f,
-  0.000010f, 0.000010f, 0.000010f, 0.000010f, 0.000005f
+static const float _CTW_TS_IR[10] = {  // ±2 % of base current
+  0.000003f, 0.000009f, 0.000009f, 0.000009f, 0.000009f,
+  0.000009f, 0.000009f, 0.000009f, 0.000009f, 0.000009f
 };
 
 // ── Internal: uniform random in [-1, +1] × range ─────────────────────────────
