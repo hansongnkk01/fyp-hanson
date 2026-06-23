@@ -696,10 +696,10 @@ bool sampleLoop(int count) {
     if (iSamples[t] < 0.0f) iSamples[t] = 0.0f;
     pSamples[t] = vSamples[t] * iSamples[t];
     int adc = readAdcAverage();
-    Serial.printf("[Sample] t=%d rawV=%.3f adjV=%.3f I=%.4f P=%.4f ADC=%d\n",
+    Serial.printf("[Measure] t=%d rawV=%.3f adjV=%.3f I=%.4f P=%.4f ADC=%d\n",
                   t, rawV, vSamples[t], iSamples[t], pSamples[t], adc);
 #else
-    Serial.printf("[Sample] t=%d V=%.3f I=%.4f P=%.6f\n",
+    Serial.printf("[Measure] t=%d V=%.3f I=%.4f P=%.6f\n",
                   t, vSamples[t], iSamples[t] * 1000.0f, pSamples[t]);
 #endif
 
