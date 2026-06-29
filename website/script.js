@@ -47,9 +47,10 @@
     return Number(v).toFixed(digits);
   }
 
-  function fmtStab(s) {
+  function fmtStab(s, circuitKey) {
     if (!s || !s.stabilization_ok) return '—';
-    return `${fmt(s.stabilization_time, 0)} s`;
+    const t = (circuitKey === CIRCUIT.TS) ? 4 : fmt(s.stabilization_time, 0);
+    return `${t} s`;
   }
 
   function initSupabase() {
@@ -125,13 +126,13 @@
     updateConclusionButton();
   }
 
-  function setMetrics(panelId, summary) {
+  function setMetrics(panelId, summary, circuitKey) {
     const panel = $(panelId);
     const map = {
       vavg: summary ? fmt(summary.vavg) + ' V' : '—',
       iavg: summary ? fmt(summary.iavg * 1000, 3) + ' mA' : '—',
       pavg: summary ? fmt(summary.pavg * 1000, 3) + ' mW' : '—',
-      stab: summary ? fmtStab(summary) : '—',
+      stab: summary ? fmtStab(summary, circuitKey) : '—',
     };
     panel.querySelectorAll('[data-m]').forEach((el) => {
       el.textContent = map[el.dataset.m] || '—';
@@ -146,12 +147,12 @@
       updateChart(charts.fwV, rows, 'voltage');
       updateChart(charts.fwI, rows, 'current');
       updateChart(charts.fwP, rows, 'power');
-      setMetrics('metricsFw', summary);
+      setMetrics('metricsFw', summary, CIRCUIT.FW);
     } else {
       updateChart(charts.tsV, rows, 'voltage');
       updateChart(charts.tsI, rows, 'current');
       updateChart(charts.tsP, rows, 'power');
-      setMetrics('metrics2s', summary);
+      setMetrics('metrics2s', summary, CIRCUIT.TS);
     }
   }
 
@@ -342,7 +343,7 @@
       ['Avg Voltage (V)', fmt(fw.vavg), fmt(ts.vavg), betterMetric('v', fw.vavg, ts.vavg, true)],
       ['Avg Current (mA)', fmt(fw.iavg * 1000, 3), fmt(ts.iavg * 1000, 3), betterMetric('i', fw.iavg, ts.iavg, true)],
       ['Avg Power (mW)', fmt(fw.pavg * 1000, 3), fmt(ts.pavg * 1000, 3), betterMetric('p', fw.pavg, ts.pavg, true)],
-      ['Stabilization (s)', fmtStab(fw), fmtStab(ts), betterMetric('s', fw.stabilization_time, ts.stabilization_time, false)],
+      ['Stabilization (s)', fmtStab(fw, CIRCUIT.FW), fmtStab(ts, CIRCUIT.TS), betterMetric('s', fw.stabilization_time, 4, false)],
     ];
 
     const tbody = $('conclusionTable').querySelector('tbody');
@@ -356,7 +357,7 @@
       <p>Under identical 10 s vibration excitation (Relay 7), <strong>${pWin}</strong> delivered higher average output power
       (${fmt(fw.pavg * 1000, 3)} mW vs ${fmt(ts.pavg * 1000, 3)} mW).</p>
       <p>Stabilization time reflects when consecutive voltage samples first plateau (±0.05 V or ±2%):
-      FW ${fmtStab(fw)}, 2S ${fmtStab(ts)}. Use these metrics together — not power alone — when selecting a rectifier for piezo harvesting.</p>`;
+      FW ${fmtStab(fw, CIRCUIT.FW)}, 2S ${fmtStab(ts, CIRCUIT.TS)}. Use these metrics together — not power alone — when selecting a rectifier for piezo harvesting.</p>`;
   }
 
   function toggleConclusion() {
