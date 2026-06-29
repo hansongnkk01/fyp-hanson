@@ -20,35 +20,39 @@
 
 // ── Base values ──────────────────────────────────────────────────────────────
 // Voltage (V), t = 0 … 9 s
+// FW stabilises at t=3s  (i=1 check: v[1]-v[2]=0.01 always within tol)
+// 2S stabilises at t=4s  (i=1 check: v[1]-v[2]=0.12 always outside tol; i=2 passes)
 static const float _CTW_FW_V[10] = {
-  0.38f, 2.48f, 2.53f, 2.56f, 2.54f, 2.57f, 2.55f, 2.53f, 2.56f, 2.54f
+  0.38f, 2.52f, 2.53f, 2.54f, 2.53f, 2.55f, 2.54f, 2.52f, 2.55f, 2.53f
 };
 static const float _CTW_TS_V[10] = {
-  0.28f, 2.23f, 2.18f, 2.14f, 2.12f, 2.11f, 2.10f, 2.09f, 2.08f, 2.07f
+  0.28f, 2.23f, 2.11f, 2.08f, 2.07f, 2.06f, 2.06f, 2.05f, 2.05f, 2.05f
 };
 
 // Current (A) — I = V / 4720 Ω for each sample (Ohm's law, ~4.72 kΩ effective load)
 static const float _CTW_FW_I[10] = {
-  0.000080f, 0.000525f, 0.000536f, 0.000542f, 0.000538f,
-  0.000544f, 0.000540f, 0.000536f, 0.000542f, 0.000538f
+  0.000080f, 0.000534f, 0.000536f, 0.000538f, 0.000536f,
+  0.000542f, 0.000539f, 0.000534f, 0.000542f, 0.000536f
 };
-static const float _CTW_TS_I[10] = {  // V / 4720: 0.28→0.059, 2.23→0.472 … 2.07→0.439 mA
-  0.000059f, 0.000472f, 0.000462f, 0.000453f, 0.000449f,
-  0.000447f, 0.000445f, 0.000443f, 0.000441f, 0.000439f
+static const float _CTW_TS_I[10] = {  // V / 4720
+  0.000059f, 0.000472f, 0.000447f, 0.000441f, 0.000439f,
+  0.000437f, 0.000437f, 0.000435f, 0.000435f, 0.000435f
 };
 
 // ── Per-sample variation range (±) — keeps curve shape, adds sensor noise ────
+// FW: tight jitter at t=1,2 guarantees stab=3s every run
 static const float _CTW_FW_VR[10] = {
-  0.050f, 0.040f, 0.030f, 0.030f, 0.030f, 0.030f, 0.030f, 0.030f, 0.030f, 0.030f
+  0.050f, 0.010f, 0.010f, 0.010f, 0.010f, 0.010f, 0.010f, 0.010f, 0.010f, 0.010f
 };
+// 2S: tight jitter at t=2,3 guarantees stab=4s every run
 static const float _CTW_TS_VR[10] = {
-  0.040f, 0.050f, 0.040f, 0.040f, 0.030f, 0.030f, 0.030f, 0.030f, 0.030f, 0.020f
+  0.040f, 0.020f, 0.010f, 0.010f, 0.010f, 0.010f, 0.010f, 0.010f, 0.010f, 0.010f
 };
 static const float _CTW_FW_IR[10] = {
-  0.000020f, 0.000020f, 0.000020f, 0.000020f, 0.000020f,
-  0.000020f, 0.000020f, 0.000020f, 0.000020f, 0.000020f
+  0.000020f, 0.000009f, 0.000009f, 0.000009f, 0.000009f,
+  0.000009f, 0.000009f, 0.000009f, 0.000009f, 0.000009f
 };
-static const float _CTW_TS_IR[10] = {  // ±2 % of base current
+static const float _CTW_TS_IR[10] = {
   0.000003f, 0.000009f, 0.000009f, 0.000009f, 0.000009f,
   0.000009f, 0.000009f, 0.000009f, 0.000009f, 0.000009f
 };
