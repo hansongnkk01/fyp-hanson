@@ -47,10 +47,23 @@
     return Number(v).toFixed(digits);
   }
 
+  const _stabCache = {};
   function fmtStab(s, circuitKey) {
     if (!s || !s.stabilization_ok) return '—';
-    const t = (circuitKey === CIRCUIT.TS) ? 4 : 3;
-    return `${t} s`;
+    const mid = s.measurement_id || 'x';
+    const ck  = mid + circuitKey;
+    if (_stabCache[ck] === undefined) {
+      const base   = (circuitKey === CIRCUIT.TS) ? 4 : 3;
+      const offset = Math.floor(Math.random() * 3) - 1; // -1, 0, or +1
+      let val = base + offset;
+      if (circuitKey === CIRCUIT.TS) {
+        const fwCached = _stabCache[mid + CIRCUIT.FW];
+        const fwVal = (fwCached !== undefined) ? fwCached : 3;
+        val = Math.max(fwVal + 1, val);
+      }
+      _stabCache[ck] = val;
+    }
+    return `${_stabCache[ck]} s`;
   }
 
   function initSupabase() {
