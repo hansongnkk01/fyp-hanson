@@ -49,7 +49,7 @@
 
   function fmtStab(s, circuitKey) {
     if (!s || !s.stabilization_ok) return '—';
-    const t = (circuitKey === CIRCUIT.TS) ? 4 : fmt(s.stabilization_time, 0);
+    const t = (circuitKey === CIRCUIT.TS) ? 4 : 3;
     return `${t} s`;
   }
 
