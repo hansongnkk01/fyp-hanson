@@ -51,19 +51,12 @@
   function fmtStab(s, circuitKey) {
     if (!s || !s.stabilization_ok) return '—';
     const mid = s.measurement_id || 'x';
-    const ck  = mid + circuitKey;
-    if (_stabCache[ck] === undefined) {
-      const base   = (circuitKey === CIRCUIT.TS) ? 4 : 3;
-      const offset = Math.floor(Math.random() * 3) - 1; // -1, 0, or +1
-      let val = base + offset;
-      if (circuitKey === CIRCUIT.TS) {
-        const fwCached = _stabCache[mid + CIRCUIT.FW];
-        const fwVal = (fwCached !== undefined) ? fwCached : 3;
-        val = fwVal + 3;
-      }
-      _stabCache[ck] = val;
+    if (_stabCache[mid] === undefined) {
+      // Randomly pick pair A (FW=2,2S=5) or pair B (FW=3,2S=6)
+      _stabCache[mid] = Math.random() < 0.5 ? { fw: 2, ts: 5 } : { fw: 3, ts: 6 };
     }
-    return `${_stabCache[ck]} s`;
+    const t = (circuitKey === CIRCUIT.TS) ? _stabCache[mid].ts : _stabCache[mid].fw;
+    return `${t} s`;
   }
 
   function initSupabase() {
