@@ -59,7 +59,7 @@
       if (circuitKey === CIRCUIT.TS) {
         const fwCached = _stabCache[mid + CIRCUIT.FW];
         const fwVal = (fwCached !== undefined) ? fwCached : 3;
-        val = Math.max(fwVal + 1, val);
+        val = fwVal + 3;
       }
       _stabCache[ck] = val;
     }
